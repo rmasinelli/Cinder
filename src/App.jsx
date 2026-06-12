@@ -434,7 +434,7 @@ export default function App() {
 const ONBOARD_STEPS = [
   { icon:"🔥", title:"Welcome to Cinder", body:"Cinder is your IT Help Desk training platform. You'll work through real-world IT scenarios, document your troubleshooting process, and build hands-on skills every lab day." },
   { icon:"🎫", title:"Your Ticket Queue", body:"When your instructor assigns a lab, a ticket lands in your My Tickets queue — just like a real client request. Read it carefully, then work through the issue on the physical equipment." },
-  { icon:"📓", title:"Ember Field Journal", body:"As you work each ticket, document your process in the Field Journal sections: Initial Hypothesis, Troubleshooting Steps, and Resolution. This documentation is your lab submission — treat it like a professional work log." },
+  { icon:"📓", title:"Ember Field Journal", body:"As you work each ticket, document your process in the physical Ember Field Journal — Initial Hypothesis, Troubleshooting Steps, Resolution, and Connections. This booklet is your lab submission at midterm and final." },
   { icon:"📖", title:"Knowledge Base", body:"The Knowledge Base is a shared class reference. After completing a lab, consider submitting an article explaining what you learned. Your classmates will benefit from it." },
   { icon:"✅", title:"You're ready!", body:"That's the quick tour. Your instructor will push a ticket to your queue each lab session. Open it in My Tickets, read the client request, work the problem, and document everything. Good luck!" },
 ];
@@ -998,7 +998,7 @@ function MyTickets({session,tickets,users,assignedTickets,onOpen,onSaveNote,onSt
 
           <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:20,alignItems:"start"}}>
             <div>
-              <Card style={{marginBottom:16}}>
+              <Card>
                 {requester && (
                   <div style={{marginBottom:14}}>
                     <SectionLabel>Requester</SectionLabel>
@@ -1007,9 +1007,6 @@ function MyTickets({session,tickets,users,assignedTickets,onOpen,onSaveNote,onSt
                 )}
                 <SectionLabel>Description</SectionLabel>
                 <p style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:0,whiteSpace:"pre-wrap"}}>{at.description}</p>
-              </Card>
-              <Card>
-                <FieldJournal assignedTicketId={at.id} studentId={session.id} onSave={onSaveNote} />
               </Card>
             </div>
             <div>
