@@ -1515,167 +1515,236 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
 
 // ═══════════════════════════════════════════════════════════════
 // LAB MANAGER (Instructor)
+// Two-column: left = class + students + assignment options
+//             right = scenario browser (all courses) + preview
 // ═══════════════════════════════════════════════════════════════
 function LabManager({session,classStudents,customScenarios,onActivate}) {
   const myClasses = session.classes||[];
   const [activeClassId,setActiveClassId]=useState(myClasses[0]?.id||null);
-  const [expandWeek,setExpandWeek]=useState(null);
   const [assignMode,setAssignMode]=useState("broadcast");
   const [selectedStudents,setSelectedStudents]=useState([]);
   const [pushing,setPushing]=useState(false);
-  const [scenarioOverride,setScenarioOverride]=useState({});
+  const [scenarioCourseTab,setScenarioCourseTab]=useState("net");
+  const [scenarioSearch,setScenarioSearch]=useState("");
+  const [selectedScenario,setSelectedScenario]=useState(null);
+  const [weekOverride,setWeekOverride]=useState("");
 
-  const activeClass = myClasses.find(c=>c.id===activeClassId)||myClasses[0];
-  const courseTab = activeClass?.course_id||"net";
-  const course = courseById(courseTab);
+  const activeClass=myClasses.find(c=>c.id===activeClassId)||myClasses[0];
+  const classCourse=courseById(activeClass?.course_id)||courseById("net");
+  const courseStudents=classStudents.filter(u=>u.enrolled_class_id===activeClassId);
 
-  // Students enrolled in the active class specifically
-  const courseStudents = classStudents.filter(u=>u.enrolled_class_id===activeClassId);
+  // ALL scenarios from all courses + custom
+  const allBuiltIn=SEED_SCENARIOS;
+  const allCustom=(customScenarios||[]).map(s=>({...s,courseId:s.course_id}));
+  const everything=[...allBuiltIn,...allCustom];
 
-  // Merge built-in + custom for this course
-  const builtIn=SEED_SCENARIOS.filter(s=>s.courseId===courseTab);
-  const custom=(customScenarios||[]).filter(s=>s.course_id===courseTab);
-  const allScenarios=[...builtIn,...custom.map(s=>({...s,courseId:s.course_id}))];
-  const scenarios=builtIn;
+  const tabScenarios=everything
+    .filter(s=>(s.courseId||s.course_id)===scenarioCourseTab)
+    .filter(s=>scenarioSearch===""||s.title.toLowerCase().includes(scenarioSearch.toLowerCase()));
 
-  function toggleStudent(uid) {
-    setSelectedStudents(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
-  }
+  function toggleStudent(uid){setSelectedStudents(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);}
 
-  async function activate(week) {
-    const defaultScenario=scenarios.find(s=>s.week===week);
-    const overrideId=scenarioOverride[week];
-    const scenario=overrideId
-      ? allScenarios.find(s=>s.id===overrideId)||defaultScenario
-      : defaultScenario;
-    if(!scenario) return;
+  async function pushSelected(){
+    if(!selectedScenario||!activeClassId) return;
     const assignees=assignMode==="broadcast"?courseStudents.map(u=>u.id):selectedStudents;
     if(assignees.length===0) return;
+    const week=weekOverride?parseInt(weekOverride):(selectedScenario.week||1);
     setPushing(true);
-    await onActivate(courseTab,week,scenario.id,assignMode,assignees,activeClassId);
+    await onActivate(selectedScenario.courseId||selectedScenario.course_id,week,selectedScenario.id,assignMode,assignees,activeClassId);
     setPushing(false);
-    setExpandWeek(null); setSelectedStudents([]);
+    setSelectedStudents([]);
   }
 
-  return (
+  if(myClasses.length===0) return (
     <div style={{maxWidth:900}}>
-      <PageTitle title="Lab Manager" sub="Assign lab scenarios by class and week." />
+      <PageTitle title="Lab Manager" sub="Assign scenarios to students." />
+      <EmptyState msg="No classes found. Make sure classes exist in Supabase." />
+    </div>
+  );
 
-      {myClasses.length===0 && <EmptyState msg="You aren't enrolled in any classes yet. Join a class first." />}
+  const COURSE_TABS=[
+    {id:"net",label:"Networking",color:"#38bdf8"},
+    {id:"hw",label:"Hardware",color:"#fb923c"},
+    {id:"cyber",label:"Cybersecurity",color:"#a78bfa"},
+    {id:"custom",label:"Custom",color:"#E8922E"},
+  ];
+
+  return (
+    <div style={{maxWidth:1100}}>
+      <PageTitle title="Lab Manager" sub="Pick a class, browse scenarios, and push to students." />
 
       {/* Class tabs */}
       <div style={{display:"flex",gap:8,marginBottom:24,flexWrap:"wrap"}}>
         {myClasses.map(c=>{
-          const courseInfo=courseById(c.course_id)||{color:"#E8922E",icon:"📋"};
+          const ci=courseById(c.course_id)||{color:"#E8922E",icon:"📋"};
           const isActive=activeClassId===c.id;
           return (
-            <button key={c.id} onClick={()=>{setActiveClassId(c.id);setExpandWeek(null);setSelectedStudents([]);}}
+            <button key={c.id} onClick={()=>{setActiveClassId(c.id);setSelectedStudents([]);}}
               style={{padding:"8px 18px",borderRadius:8,fontSize:13,cursor:"pointer",
-                background:isActive?courseInfo.color+"22":"#1A1A1A",
-                color:isActive?courseInfo.color:"#8A7868",
-                border:`1px solid ${isActive?courseInfo.color+"55":"#242424"}`,
-                fontWeight:isActive?700:400}}>
-              {courseInfo.icon} {c.name}
+                background:isActive?ci.color+"22":"#141414",color:isActive?ci.color:"#8A7868",
+                border:`1px solid ${isActive?ci.color+"55":"#1E1E1E"}`,fontWeight:isActive?700:400}}>
+              {ci.icon} {c.name}
             </button>
           );
         })}
       </div>
 
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {Array.from({length:10},(_,i)=>i+1).map(week=>{
-          const scenario=scenarios.find(s=>s.week===week);
-          const expanded=expandWeek===week;
-          return (
-            <div key={week} style={{background:"#1A1A1A",border:"1px solid #242424",borderRadius:12,overflow:"hidden"}}>
-              <div style={{display:"flex",alignItems:"center",gap:16,padding:"14px 20px",cursor:"pointer"}}
-                onClick={()=>setExpandWeek(expanded?null:week)}>
-                <div style={{width:32,height:32,borderRadius:8,background:"#0D0D0D",
-                  border:"1px solid #242424",display:"flex",alignItems:"center",justifyContent:"center",
-                  fontSize:13,fontWeight:700,color:"#6A5848",flexShrink:0}}>
-                  {week}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{color:"#B8A898",fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                    {scenario?.title||"No scenario defined"}
-                  </div>
-                  {scenario&&<div style={{fontSize:11,color:"#6A5848",marginTop:2,display:"flex",gap:8,alignItems:"center"}}>
-                    {badge(scenario.priority,PRIORITY_COLOR[scenario.priority])}
-                    <span>{scenario.mode}</span>
-                    {scenario.linkedCourse&&<span style={{color:"#a78bfa"}}>↔ cross-course</span>}
-                  </div>}
-                </div>
-                <div style={{color:"#6A5848",fontSize:12,flexShrink:0}}>{expanded?"▲":"▼"}</div>
-              </div>
+      <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:20,alignItems:"start"}}>
 
-              {expanded&&(
-                <div style={{borderTop:"1px solid #242424",padding:"20px 24px",background:"#0D0D0D"}}>
-                  {/* Scenario picker */}
-                  <Field label="Scenario">
-                    <select value={scenarioOverride[week]||scenario?.id||""}
-                      onChange={e=>setScenarioOverride(p=>({...p,[week]:e.target.value}))}
-                      style={inputStyle}>
-                      {allScenarios.map(s=>(
-                        <option key={s.id} value={s.id}>
-                          {s.week?`W${s.week} · `:""}{s.title}{s.courseId!==courseTab?" (other course)":""}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  {/* Description + instructor notes preview */}
-                  {(()=>{
-                    const sel=scenarioOverride[week]?allScenarios.find(s=>s.id===scenarioOverride[week]):scenario;
-                    if(!sel) return null;
-                    return (
-                      <div style={{marginBottom:20}}>
-                        <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"#6A5848",marginBottom:6,fontWeight:700}}>Client-facing ticket (what students see)</div>
-                        <div style={{color:"#8A7868",fontSize:12,lineHeight:1.7,whiteSpace:"pre-wrap",background:"#1A1A1A",borderRadius:8,padding:"12px 16px",marginBottom:12}}>{sel.description}</div>
-                        {sel.instructorNotes&&(
-                          <>
-                            <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"#E8922E",marginBottom:6,fontWeight:700}}>🔬 Physical Lab Task (instructor only)</div>
-                            <div style={{color:"#B8A898",fontSize:12,lineHeight:1.7,whiteSpace:"pre-wrap",background:"#E8922E08",border:"1px solid #E8922E22",borderRadius:8,padding:"12px 16px"}}>{sel.instructorNotes}</div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  <Field label="Assignment Mode">
-                    <select value={assignMode} onChange={e=>setAssignMode(e.target.value)} style={inputStyle}>
-                      <option value="broadcast">Broadcast — all enrolled students</option>
-                      <option value="individual">Individual — select specific students</option>
-                      <option value="pairs">Pairs — students work in pairs</option>
-                    </select>
-                  </Field>
-                  {assignMode!=="broadcast"&&(
-                    <Field label={`Select Students (${selectedStudents.length} selected)`}>
-                      {courseStudents.length===0
-                        ? <div style={{color:"#6A5848",fontSize:12}}>No students enrolled in this track yet.</div>
-                        : <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                            {courseStudents.map(u=>(
-                              <label key={u.id} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"7px 12px",
-                                background:selectedStudents.includes(u.id)?"#1A1A1A":"transparent",
-                                borderRadius:6,border:"1px solid "+(selectedStudents.includes(u.id)?"#242424":"transparent")}}>
-                                <input type="checkbox" checked={selectedStudents.includes(u.id)} onChange={()=>toggleStudent(u.id)} style={{accentColor:course.color}} />
-                                <span style={{fontSize:13,color:"#B8A898"}}>{u.alias}</span>
-                              </label>
-                            ))}
-                          </div>
-                      }
-                    </Field>
-                  )}
-                  <button onClick={()=>activate(week)}
-                    style={{...btnPrimary,background:course.color,
-                      opacity:(pushing||(!assignMode==="broadcast"&&selectedStudents.length===0))?0.5:1}}
-                    disabled={pushing||(assignMode!=="broadcast"&&selectedStudents.length===0)}>
-                    {pushing?"Pushing…":`Push Week ${week} Lab to Students →`}
-                  </button>
-                  {assignMode==="broadcast"&&<div style={{fontSize:11,color:"#6A5848",marginTop:8,textAlign:"center"}}>
-                    {courseStudents.length} student(s) enrolled in this track
-                  </div>}
-                </div>
-              )}
+        {/* ── Left: Class panel ── */}
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+
+          {/* Assignment options */}
+          <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+            <div style={{padding:"10px 16px",borderBottom:"1px solid #1E1E1E",fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038"}}>Assignment Options</div>
+            <div style={{padding:"14px 16px"}}>
+              <Field label="Mode">
+                <select value={assignMode} onChange={e=>{setAssignMode(e.target.value);setSelectedStudents([]);}} style={inputStyle}>
+                  <option value="broadcast">Broadcast — whole class</option>
+                  <option value="individual">Individual — select students</option>
+                  <option value="pairs">Pairs</option>
+                  <option value="teams">Teams</option>
+                </select>
+              </Field>
+              <Field label="Week (optional override)">
+                <input value={weekOverride} onChange={e=>setWeekOverride(e.target.value)}
+                  type="number" min={1} max={10} placeholder={`Default: ${selectedScenario?.week||"—"}`}
+                  style={inputStyle} />
+              </Field>
             </div>
-          );
-        })}
+          </div>
+
+          {/* Students */}
+          <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+            <div style={{padding:"10px 16px",borderBottom:"1px solid #1E1E1E",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038"}}>Students</span>
+              <span style={{fontSize:11,color:"#6A5848"}}>{courseStudents.length} enrolled</span>
+            </div>
+            <div style={{padding:"10px 12px",maxHeight:280,overflowY:"auto"}}>
+              {courseStudents.length===0
+                ? <div style={{color:"#4A4038",fontSize:12,padding:"8px 4px"}}>No students enrolled in this class.</div>
+                : courseStudents.map(u=>{
+                    const checked=assignMode==="broadcast"||selectedStudents.includes(u.id);
+                    return (
+                      <label key={u.id} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 8px",borderRadius:6,cursor:"pointer",
+                        background:selectedStudents.includes(u.id)?"#1E1E1E":"transparent"}}>
+                        <input type="checkbox"
+                          checked={assignMode==="broadcast"?true:selectedStudents.includes(u.id)}
+                          disabled={assignMode==="broadcast"}
+                          onChange={()=>toggleStudent(u.id)}
+                          style={{accentColor:classCourse.color}} />
+                        <span style={{fontSize:13,color:checked?"#EDE9E3":"#8A7868"}}>{u.alias}</span>
+                      </label>
+                    );
+                  })
+              }
+            </div>
+          </div>
+
+          {/* Push button */}
+          <button onClick={pushSelected}
+            disabled={pushing||!selectedScenario||(assignMode!=="broadcast"&&selectedStudents.length===0)}
+            style={{...btnPrimary,background:selectedScenario?classCourse.color:"#2A2A2A",
+              color:selectedScenario?"#0D0D0D":"#4A4038",
+              opacity:pushing?0.6:1,fontSize:13}}>
+            {pushing?"Pushing…":selectedScenario?`Push "${selectedScenario.title.slice(0,30)}${selectedScenario.title.length>30?"…":""}" →`:"← Select a scenario first"}
+          </button>
+          {selectedScenario&&assignMode==="broadcast"&&(
+            <div style={{fontSize:11,color:"#6A5848",textAlign:"center",marginTop:-4}}>
+              Will push to all {courseStudents.length} student(s) in this class
+            </div>
+          )}
+        </div>
+
+        {/* ── Right: Scenario browser ── */}
+        <div>
+          {/* Course tabs + search */}
+          <div style={{display:"flex",gap:6,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
+            {COURSE_TABS.map(t=>(
+              <button key={t.id} onClick={()=>{setScenarioCourseTab(t.id);setScenarioSearch("");}}
+                style={{padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",
+                  background:scenarioCourseTab===t.id?t.color+"22":"#141414",
+                  color:scenarioCourseTab===t.id?t.color:"#8A7868",
+                  border:`1px solid ${scenarioCourseTab===t.id?t.color+"55":"#1E1E1E"}`,
+                  fontWeight:scenarioCourseTab===t.id?700:400}}>
+                {t.label}
+              </button>
+            ))}
+            <input value={scenarioSearch} onChange={e=>setScenarioSearch(e.target.value)}
+              style={{...inputStyle,width:200,padding:"6px 10px",fontSize:12,marginLeft:"auto"}}
+              placeholder="Search scenarios…" />
+          </div>
+
+          {/* Scenario list */}
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16,maxHeight:320,overflowY:"auto"}}>
+            {tabScenarios.length===0&&<EmptyState msg="No scenarios in this category." />}
+            {tabScenarios.map(s=>{
+              const course=courseById(s.courseId||s.course_id);
+              const requester=PERSON_BY_ID[s.requesterId];
+              const orgColor=requester?(ORG_COLOR[requester.org]||"#6A5848"):"#6A5848";
+              const isSelected=selectedScenario?.id===s.id;
+              return (
+                <div key={s.id} onClick={()=>setSelectedScenario(s)}
+                  style={{background:isSelected?"#1E1A17":"#141414",
+                    border:`1px solid ${isSelected?classCourse.color+"55":"#1E1E1E"}`,
+                    borderLeft:`3px solid ${isSelected?classCourse.color:(course?.color||"#242424")}`,
+                    borderRadius:8,padding:"12px 16px",cursor:"pointer",transition:"all 0.1s"}}
+                  onMouseEnter={e=>{if(!isSelected)e.currentTarget.style.background="#1A1A1A";}}
+                  onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background="#141414";}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                    {s.week&&<span style={{fontSize:10,fontFamily:"monospace",color:"#4A4038",background:"#1E1E1E",borderRadius:3,padding:"1px 5px"}}>W{s.week}</span>}
+                    {s._builtin===false&&<span style={{fontSize:9,color:"#E8922E",border:"1px solid #E8922E44",borderRadius:3,padding:"1px 4px"}}>custom</span>}
+                    <span style={{fontSize:10,fontWeight:700,color:orgColor,marginLeft:"auto"}}>{requester?.orgName||""}</span>
+                  </div>
+                  <div style={{fontSize:13,fontWeight:500,color:"#EDE9E3",marginBottom:4,lineHeight:1.3}}>{s.title}</div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{fontSize:10,color:PRIORITY_COLOR[s.priority]||"#6A5848",fontWeight:700}}>{s.priority}</span>
+                    <span style={{fontSize:10,color:"#4A4038"}}>·</span>
+                    <span style={{fontSize:10,color:"#6A5848"}}>{s.mode}</span>
+                    {s.linkedCourse&&<span style={{fontSize:10,color:"#a78bfa"}}>↔ {s.linkedCourse.toUpperCase()}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Selected scenario preview */}
+          {selectedScenario&&(()=>{
+            const requester=PERSON_BY_ID[selectedScenario.requesterId];
+            const orgColor=requester?(ORG_COLOR[requester.org]||"#E8922E"):"#E8922E";
+            const initials=requester?requester.name.split(" ").map(n=>n[0]).join("").slice(0,2):"?";
+            return (
+              <div style={{background:"#0D0D0D",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+                <div style={{padding:"10px 16px",borderBottom:"1px solid #1E1E1E",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038"}}>Preview — what students receive</span>
+                  <span style={{fontSize:10,color:"#2A2A2A",marginLeft:"auto"}}>instructor notes below</span>
+                </div>
+                {/* Email header */}
+                {requester&&(
+                  <div style={{padding:"12px 16px",borderBottom:"1px solid #1A1A1A",background:"#111",display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:32,height:32,borderRadius:6,background:`${orgColor}20`,border:`1px solid ${orgColor}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:orgColor,flexShrink:0,fontFamily:"'Raleway',sans-serif"}}>
+                      {initials}
+                    </div>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:600,color:"#EDE9E3"}}>{requester.name} <span style={{fontWeight:400,color:"#4A3828",fontSize:10,fontFamily:"monospace"}}>&#60;{requester.email}&#62;</span></div>
+                      <div style={{fontSize:10,color:orgColor}}>{requester.orgName} · {requester.role}</div>
+                    </div>
+                  </div>
+                )}
+                <div style={{padding:"14px 16px"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"#EDE9E3",marginBottom:10}}>{selectedScenario.title}</div>
+                  <div style={{fontSize:12,color:"#8A7868",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:selectedScenario.instructorNotes?16:0}}>{selectedScenario.description}</div>
+                  {selectedScenario.instructorNotes&&(
+                    <div style={{borderTop:"1px solid #1E1E1E",paddingTop:12}}>
+                      <div style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.12em",color:"#E8922E",marginBottom:6,fontWeight:700}}>🔬 Physical Lab Task — Instructor Only</div>
+                      <div style={{fontSize:11,color:"#A89888",lineHeight:1.7,whiteSpace:"pre-wrap",background:"#E8922E08",border:"1px solid #E8922E22",borderRadius:6,padding:"10px 12px"}}>{selectedScenario.instructorNotes}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );
@@ -1684,10 +1753,16 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
 // ═══════════════════════════════════════════════════════════════
 // SCENARIO LIBRARY
 // ═══════════════════════════════════════════════════════════════
-const BLANK_SCENARIO = {title:"",course_id:"net",week:1,priority:"Medium",mode:"broadcast",categories:[],description:""};
+const BLANK_SCENARIO = {
+  title:"", course_id:"net", week:1, priority:"Medium",
+  mode:"broadcast", categories:[], requesterId:"",
+  description:"", instructorNotes:"",
+};
+const COURSE_COLOR = {net:"#38bdf8",hw:"#fb923c",cyber:"#a78bfa"};
+const COURSE_LABEL = {net:"Networking",hw:"Hardware",cyber:"Cybersecurity"};
 
 function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
-  const [editing,setEditing]   = useState(null); // null | "new" | scenario object
+  const [editing,setEditing]   = useState(null);
   const [filter,setFilter]     = useState("all");
   const [importing,setImporting] = useState(false);
   const [importErr,setImportErr] = useState("");
@@ -1698,8 +1773,8 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
   const all = [...builtIn,...customScenarios];
   const filtered = filter==="all" ? all : filter==="custom" ? customScenarios : all.filter(s=>s.course_id===filter||s.courseId===filter);
 
-  function startNew()  { setForm(BLANK_SCENARIO); setEditing("new"); }
-  function startEdit(s){ setForm({...s}); setEditing(s); }
+  function startNew()  { setForm({...BLANK_SCENARIO}); setEditing("new"); }
+  function startEdit(s){ setForm({...BLANK_SCENARIO,...s}); setEditing(s); }
   function cancel()    { setEditing(null); setImporting(false); setImportErr(""); }
 
   async function handleSave() {
@@ -1721,7 +1796,6 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
           rows = JSON.parse(ev.target.result);
           if (!Array.isArray(rows)) throw new Error("JSON must be an array of scenarios.");
         } else {
-          // CSV: first row = headers
           const lines = ev.target.result.trim().split("\n");
           const headers = lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
           rows = lines.slice(1).map(line=>{
@@ -1729,75 +1803,159 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
             return Object.fromEntries(headers.map((h,i)=>[h,vals[i]||""]));
           });
         }
-        // Validate required fields
         const required = ["title","course_id","week","priority","mode","description"];
         const missing = rows.findIndex(r=>required.some(k=>!r[k]));
         if (missing>=0) throw new Error(`Row ${missing+1} is missing required fields.`);
-        rows = rows.map(r=>({...r, week:parseInt(r.week)||1, categories: r.categories ? (Array.isArray(r.categories)?r.categories:r.categories.split(";").map(c=>c.trim())) : []}));
-        setImportErr("");
-        onImport(rows);
-        setImporting(false);
+        rows = rows.map(r=>({...r, week:parseInt(r.week)||1,
+          categories: r.categories ? (Array.isArray(r.categories)?r.categories:r.categories.split(";").map(c=>c.trim())) : []}));
+        setImportErr(""); onImport(rows); setImporting(false);
       } catch(err) { setImportErr(err.message); }
     };
     reader.readAsText(file);
     e.target.value = "";
   }
 
-  const courseColor = {net:"#38bdf8",hw:"#fb923c",cyber:"#a78bfa"};
-  const courseLabel = {net:"Networking",hw:"Hardware",cyber:"Cybersecurity"};
+  // ── Editor view ──
+  if (editing) {
+    const persona = PERSON_BY_ID[form.requesterId];
+    const orgColor = persona ? (ORG_COLOR[persona.org]||"#E8922E") : "#E8922E";
+    const initials = persona ? persona.name.split(" ").map(n=>n[0]).join("").slice(0,2) : "?";
 
-  if (editing) return (
-    <div style={{maxWidth:720}}>
-      <button onClick={cancel} style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,padding:"6px 14px",fontSize:12,cursor:"pointer",marginBottom:20}}>← Back</button>
-      <PageTitle title={editing==="new"?"New Scenario":"Edit Scenario"} sub="Custom scenarios are saved to Supabase and available in Lab Manager." />
-      <Card>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-          <Field label="Title" style={{gridColumn:"1/-1"}}>
-            <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} style={inputStyle} placeholder="e.g. Configure VLANs on Cisco Switch" />
-          </Field>
-          <Field label="Course">
-            <select value={form.course_id} onChange={e=>setForm(f=>({...f,course_id:e.target.value}))} style={inputStyle}>
-              <option value="net">Networking Fundamentals</option>
-              <option value="hw">Hardware Essentials</option>
-              <option value="cyber">Cybersecurity Fundamentals</option>
-            </select>
-          </Field>
-          <Field label="Week">
-            <select value={form.week} onChange={e=>setForm(f=>({...f,week:parseInt(e.target.value)}))} style={inputStyle}>
-              {Array.from({length:10},(_,i)=>i+1).map(w=><option key={w} value={w}>Week {w}</option>)}
-            </select>
-          </Field>
-          <Field label="Priority">
-            <select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} style={inputStyle}>
-              {PRIORITIES.map(p=><option key={p} value={p}>{p}</option>)}
-            </select>
-          </Field>
-          <Field label="Mode">
-            <select value={form.mode} onChange={e=>setForm(f=>({...f,mode:e.target.value}))} style={inputStyle}>
-              <option value="broadcast">Broadcast — whole class</option>
-              <option value="individual">Individual</option>
-              <option value="pairs">Pairs</option>
-              <option value="teams">Teams</option>
-            </select>
-          </Field>
-        </div>
-        <Field label="Description / Lab Instructions">
-          <textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}
-            style={{...inputStyle,minHeight:200,resize:"vertical",lineHeight:1.7,fontFamily:"'JetBrains Mono',monospace",fontSize:12}}
-            placeholder={"Write the lab instructions here.\n\nTip: End with a 📓 Lab Book prompt so students know what to document."} />
-        </Field>
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={handleSave} disabled={saving||!form.title.trim()||!form.description.trim()} style={{...btnPrimary,flex:1,opacity:saving?0.6:1}}>
-            {saving?"Saving…":"Save Scenario"}
-          </button>
-          <button onClick={cancel} style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,padding:"10px 20px",fontSize:13,cursor:"pointer"}}>Cancel</button>
-        </div>
-      </Card>
-    </div>
-  );
+    return (
+      <div style={{maxWidth:1060}}>
+        <button onClick={cancel} style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,padding:"6px 14px",fontSize:12,cursor:"pointer",marginBottom:20}}>← Back to Library</button>
+        <PageTitle title={editing==="new"?"New Custom Scenario":"Edit Scenario"}
+          sub="Custom scenarios are saved to Supabase and available in Lab Manager." />
 
+        <div style={{display:"grid",gridTemplateColumns:"1fr 380px",gap:20,alignItems:"start"}}>
+          {/* Form */}
+          <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,padding:"24px"}}>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+              <div style={{gridColumn:"1/-1"}}>
+                <Field label="Title — Subject line the student sees">
+                  <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))}
+                    style={inputStyle} placeholder="e.g. WiFi down in the waiting room" />
+                </Field>
+              </div>
+              <Field label="Course">
+                <select value={form.course_id} onChange={e=>setForm(f=>({...f,course_id:e.target.value}))} style={inputStyle}>
+                  <option value="net">Networking Fundamentals</option>
+                  <option value="hw">Hardware Essentials</option>
+                  <option value="cyber">Cybersecurity Fundamentals</option>
+                </select>
+              </Field>
+              <Field label="Week">
+                <select value={form.week} onChange={e=>setForm(f=>({...f,week:parseInt(e.target.value)}))} style={inputStyle}>
+                  {Array.from({length:10},(_,i)=>i+1).map(w=><option key={w} value={w}>Week {w}</option>)}
+                </select>
+              </Field>
+              <Field label="Priority">
+                <select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} style={inputStyle}>
+                  {PRIORITIES.map(p=><option key={p} value={p}>{p}</option>)}
+                </select>
+              </Field>
+              <Field label="Assignment Mode">
+                <select value={form.mode} onChange={e=>setForm(f=>({...f,mode:e.target.value}))} style={inputStyle}>
+                  <option value="broadcast">Broadcast — whole class</option>
+                  <option value="individual">Individual</option>
+                  <option value="pairs">Pairs</option>
+                  <option value="teams">Teams</option>
+                </select>
+              </Field>
+            </div>
+
+            {/* Persona picker */}
+            <Field label="Requester (persona)">
+              <select value={form.requesterId} onChange={e=>setForm(f=>({...f,requesterId:e.target.value}))} style={inputStyle}>
+                <option value="">— No requester —</option>
+                {Object.values(PERSON_BY_ID).map(p=>(
+                  <option key={p.id} value={p.id}>{p.name} · {p.orgName} — {p.role}</option>
+                ))}
+              </select>
+            </Field>
+            {persona&&(
+              <div style={{background:"#0D0D0D",border:`1px solid ${orgColor}33`,borderRadius:8,padding:"10px 14px",marginTop:-6,marginBottom:14}}>
+                <div style={{fontSize:12,color:orgColor,fontWeight:600,marginBottom:3}}>{persona.name}</div>
+                <div style={{fontSize:11,color:"#6A5848",marginBottom:4}}>{persona.role} · {persona.orgName}</div>
+                <div style={{fontSize:11,color:"#4A4038",fontStyle:"italic",lineHeight:1.5}}>
+                  <span style={{color:"#6A5848",fontStyle:"normal",fontWeight:600}}>Voice: </span>{persona.voiceNotes}
+                </div>
+              </div>
+            )}
+
+            {/* Client ticket copy */}
+            <Field label="Client Ticket Copy — write in the requester's voice">
+              <textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}
+                style={{...inputStyle,minHeight:180,resize:"vertical",lineHeight:1.7,fontFamily:"'JetBrains Mono',monospace",fontSize:12}}
+                placeholder={persona
+                  ? `Write as ${persona.name}.\n\n${persona.voiceNotes}\n\nExample opening: "${persona.quirk}"`
+                  : "Select a requester above, then write the ticket in their voice.\n\nStudents will see this as the client's message — no lab instructions."
+                } />
+            </Field>
+
+            {/* Instructor notes */}
+            <Field label="Physical Lab Task — instructor only, never shown to students">
+              <textarea value={form.instructorNotes||""} onChange={e=>setForm(f=>({...f,instructorNotes:e.target.value}))}
+                style={{...inputStyle,minHeight:100,resize:"vertical",lineHeight:1.7,fontSize:12}}
+                placeholder="Describe the physical equipment task, learning objectives, and what students should document in their Field Journal." />
+            </Field>
+
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={handleSave}
+                disabled={saving||!form.title.trim()||!form.description.trim()}
+                style={{...btnPrimary,flex:1,opacity:saving?0.6:1}}>
+                {saving?"Saving…":"Save Scenario"}
+              </button>
+              <button onClick={cancel} style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,padding:"10px 20px",fontSize:13,cursor:"pointer"}}>Cancel</button>
+            </div>
+          </div>
+
+          {/* Live preview */}
+          <div>
+            <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038",marginBottom:8,fontWeight:600}}>Live Preview — student view</div>
+            <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+              {/* Email header */}
+              <div style={{padding:"12px 16px",borderBottom:"1px solid #1E1E1E",background:"#111",display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:32,height:32,borderRadius:6,background:`${orgColor}20`,border:`1px solid ${orgColor}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:orgColor,flexShrink:0,fontFamily:"'Raleway',sans-serif"}}>
+                  {initials}
+                </div>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:"#EDE9E3"}}>{persona?.name||"No requester selected"} {persona&&<span style={{fontWeight:400,color:"#4A3828",fontSize:10,fontFamily:"monospace"}}>&#60;{persona.email}&#62;</span>}</div>
+                  {persona&&<div style={{fontSize:10,color:orgColor}}>{persona.orgName} · {persona.role}</div>}
+                </div>
+              </div>
+              {/* Subject + body */}
+              <div style={{padding:"14px 16px"}}>
+                <div style={{fontSize:13,fontWeight:600,color:form.title?"#EDE9E3":"#3A3A3A",marginBottom:10}}>{form.title||"Subject line will appear here"}</div>
+                <div style={{fontSize:12,color:form.description?"#8A7868":"#2A2A2A",lineHeight:1.7,whiteSpace:"pre-wrap",minHeight:60}}>
+                  {form.description||"Ticket copy will appear here as you type…"}
+                </div>
+              </div>
+              {/* Instructor notes preview */}
+              {form.instructorNotes&&(
+                <div style={{borderTop:"1px solid #1A1A1A",padding:"12px 16px",background:"#0D0D0D"}}>
+                  <div style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.12em",color:"#E8922E",marginBottom:6,fontWeight:700}}>🔬 Physical Lab Task — Instructor Only</div>
+                  <div style={{fontSize:11,color:"#A89888",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{form.instructorNotes}</div>
+                </div>
+              )}
+            </div>
+            {/* Badge preview */}
+            <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+              {form.course_id&&<span style={{fontSize:10,color:COURSE_COLOR[form.course_id],background:COURSE_COLOR[form.course_id]+"18",borderRadius:4,padding:"2px 7px",fontWeight:700}}>{COURSE_LABEL[form.course_id]}</span>}
+              {form.week&&<span style={{fontSize:10,color:"#6A5848",background:"#1E1E1E",borderRadius:4,padding:"2px 7px"}}>Week {form.week}</span>}
+              {form.priority&&<span style={{fontSize:10,color:PRIORITY_COLOR[form.priority],background:PRIORITY_COLOR[form.priority]+"18",borderRadius:4,padding:"2px 7px",fontWeight:700}}>{form.priority}</span>}
+              {form.mode&&<span style={{fontSize:10,color:"#6A5848",background:"#1E1E1E",borderRadius:4,padding:"2px 7px"}}>{form.mode}</span>}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Library list view ──
   return (
-    <div style={{maxWidth:900}}>
+    <div style={{maxWidth:960}}>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:24}}>
         <PageTitle title="Scenario Library" sub={`${builtIn.length} built-in · ${customScenarios.length} custom`} />
         <div style={{display:"flex",gap:8,marginTop:4}}>
@@ -1813,56 +1971,61 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
           <SectionLabel>Import Scenarios</SectionLabel>
           <p style={{fontSize:12,color:"#8A7868",marginBottom:12,lineHeight:1.6}}>
             Upload a <strong style={{color:"#B8A898"}}>JSON</strong> file (array of objects) or <strong style={{color:"#B8A898"}}>CSV</strong> file.<br/>
-            Required columns: <code style={{color:"#E8922E"}}>title, course_id, week, priority, mode, description</code><br/>
-            Optional: <code style={{color:"#6A5848"}}>categories</code> (semicolon-separated in CSV)
+            Required: <code style={{color:"#E8922E"}}>title, course_id, week, priority, mode, description</code><br/>
+            Optional: <code style={{color:"#6A5848"}}>requesterId, instructorNotes, categories</code> (categories semicolon-separated in CSV)
           </p>
-          <a href="data:text/plain,title,course_id,week,priority,mode,description,categories" download="scenario-template.csv"
-            style={{fontSize:11,color:"#E8922E",display:"block",marginBottom:12}}>
-            Download CSV template
-          </a>
           {importErr && <div style={{color:"#f87171",fontSize:12,marginBottom:10}}>{importErr}</div>}
-          <input type="file" accept=".json,.csv" onChange={handleImportFile}
-            style={{color:"#B8A898",fontSize:13}} />
+          <input type="file" accept=".json,.csv" onChange={handleImportFile} style={{color:"#B8A898",fontSize:13}} />
           <button onClick={cancel} style={{display:"block",marginTop:12,background:"none",border:"none",color:"#6A5848",fontSize:12,cursor:"pointer"}}>Cancel</button>
         </Card>
       )}
 
       {/* Filter tabs */}
       <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
-        {["all","custom","net","hw","cyber"].map(f=>(
-          <button key={f} onClick={()=>setFilter(f)}
+        {[{id:"all",label:"All"},{id:"custom",label:"Custom Only"},{id:"net",label:"Networking"},{id:"hw",label:"Hardware"},{id:"cyber",label:"Cybersecurity"}].map(f=>(
+          <button key={f.id} onClick={()=>setFilter(f.id)}
             style={{padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",
-              background:filter===f?"#E8922E22":"#1A1A1A",
-              color:filter===f?"#E8922E":"#8A7868",
-              border:`1px solid ${filter===f?"#E8922E55":"#242424"}`}}>
-            {f==="all"?"All":f==="custom"?"Custom Only":courseLabel[f]}
+              background:filter===f.id?"#E8922E22":"#1A1A1A",
+              color:filter===f.id?"#E8922E":"#8A7868",
+              border:`1px solid ${filter===f.id?"#E8922E55":"#242424"}`}}>
+            {f.label}
           </button>
         ))}
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {filtered.map(s=>(
-          <div key={s.id} style={{background:"#1A1A1A",border:"1px solid #242424",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:14}}>
-            <div style={{width:6,height:36,borderRadius:3,background:courseColor[s.course_id||s.courseId]||"#6A5848",flexShrink:0}} />
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#F0EDE8",marginBottom:4}}>{s.title}</div>
-              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                <span style={{fontSize:11,color:courseColor[s.course_id||s.courseId]}}>{courseLabel[s.course_id||s.courseId]}</span>
-                <span style={{fontSize:11,color:"#6A5848"}}>Week {s.week}</span>
-                {badge(s.priority,PRIORITY_COLOR[s.priority])}
-                <span style={{fontSize:11,color:"#6A5848"}}>{s.mode}</span>
-                {s._builtin && <span style={{fontSize:10,color:"#4A3828",border:"1px solid #4A3828",borderRadius:3,padding:"1px 5px"}}>built-in</span>}
+        {filtered.map(s=>{
+          const cid=s.course_id||s.courseId;
+          const requester=PERSON_BY_ID[s.requesterId];
+          const orgColor=requester?(ORG_COLOR[requester.org]||"#6A5848"):"#6A5848";
+          return (
+            <div key={s.id} style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:14}}>
+              <div style={{width:4,alignSelf:"stretch",borderRadius:2,background:COURSE_COLOR[cid]||"#6A5848",flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                  <span style={{fontSize:13,fontWeight:600,color:"#EDE9E3"}}>{s.title}</span>
+                  {s._builtin&&<span style={{fontSize:9,color:"#4A3828",border:"1px solid #4A3828",borderRadius:3,padding:"1px 5px",flexShrink:0}}>built-in</span>}
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,color:COURSE_COLOR[cid]||"#6A5848",fontWeight:600}}>{COURSE_LABEL[cid]||cid}</span>
+                  <span style={{color:"#2A2A2A"}}>·</span>
+                  <span style={{fontSize:11,color:"#6A5848"}}>Week {s.week}</span>
+                  <span style={{color:"#2A2A2A"}}>·</span>
+                  {badge(s.priority,PRIORITY_COLOR[s.priority])}
+                  {requester&&<span style={{fontSize:11,color:orgColor,fontWeight:600}}>{requester.name}</span>}
+                  {requester&&<span style={{fontSize:10,color:"#4A4038"}}>{requester.orgName}</span>}
+                </div>
               </div>
+              {!s._builtin && (
+                <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  <button onClick={()=>startEdit(s)} style={{background:"none",border:"1px solid #1E1E1E",color:"#8A7868",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer"}}>Edit</button>
+                  <button onClick={()=>{if(window.confirm("Delete this scenario?"))onDelete(s.id);}}
+                    style={{background:"none",border:"1px solid #7f1d1d44",color:"#f87171",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer"}}>Delete</button>
+                </div>
+              )}
             </div>
-            {!s._builtin && (
-              <div style={{display:"flex",gap:6,flexShrink:0}}>
-                <button onClick={()=>startEdit(s)} style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer"}}>Edit</button>
-                <button onClick={()=>{if(window.confirm("Delete this scenario?"))onDelete(s.id);}}
-                  style={{background:"none",border:"1px solid #7f1d1d44",color:"#f87171",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer"}}>Delete</button>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
         {filtered.length===0 && <EmptyState msg="No scenarios match this filter." />}
       </div>
     </div>
