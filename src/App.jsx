@@ -105,14 +105,14 @@ export default function App() {
   const [classStudents,setClassStudents]   = useState([]);
   const [assignedTickets,setAssignedTickets] = useState([]);
   const [customScenarios,setCustomScenarios] = useState([]);
+  const [showOnboarding,setShowOnboarding]   = useState(false);
 
   // ── Load profile from Supabase after auth ──────────────────────
   const loadProfile = useCallback(async (userId) => {
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("*, classes(name, code)")
-      .eq("id", userId)
-      .single();
+    const [{ data: profile, error }, { data: memberships }] = await Promise.all([
+      supabase.from("profiles").select("*, classes(name, code, course_id)").eq("id", userId).single(),
+      supabase.from("profile_classes").select("class_id, classes(id, name, code, course_id)").eq("profile_id", userId),
+    ]);
     if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
       setSession({
@@ -123,8 +123,12 @@ export default function App() {
         class_id: profile.class_id,
         className: profile.classes?.name || "",
         classCode: profile.classes?.code || "",
+        classes: (memberships||[]).map(m=>m.classes).filter(Boolean),
       });
       setView("dashboard");
+      if (!localStorage.getItem(`cinder:onboarded:${userId}`)) {
+        setShowOnboarding(true);
+      }
       return profile;
     }
     return null;
@@ -183,9 +187,16 @@ export default function App() {
   useEffect(()=>{
     if (!session) return;
     if (session.role === "admin") {
-      supabase.from("profiles").select("*")
-        .eq("class_id", session.class_id).eq("role","student").order("alias")
-        .then(({data})=>{ if(data) setClassStudents(data); });
+      // Load all students enrolled in any class this admin manages
+      const classIds = (session.classes||[]).map(c=>c.id).filter(Boolean);
+      if (classIds.length > 0) {
+        supabase.from("profile_classes").select("profile_id, class_id, profiles(id,alias,role,cohort,class_id)")
+          .in("class_id", classIds)
+          .then(({data})=>{
+            const students = (data||[]).map(r=>({...r.profiles, enrolled_class_id: r.class_id})).filter(s=>s&&s.role==="student");
+            setClassStudents(students);
+          });
+      }
       supabase.from("ticket_templates").select("*").order("course_id").order("week")
         .then(({data})=>{ if(data) setCustomScenarios(data); });
     } else {
@@ -226,11 +237,11 @@ export default function App() {
     showToast(`Imported ${data.length} scenario(s).`);
   }
 
-  async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds) {
+  async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId) {
     const scenario = SCENARIOS.find(s=>s.id===scenarioId);
     if (!scenario) return;
     const { data: assignment, error } = await supabase.from("lab_assignments").insert({
-      class_id: session.class_id,
+      class_id: classId || session.class_id,
       week_label: `Week ${week} — ${scenario.title}`,
       assigned_by: session.id,
     }).select().single();
@@ -287,8 +298,14 @@ export default function App() {
   );
   if(!session) return <Login onSignIn={loadProfile} />;
 
+  function dismissOnboarding() {
+    localStorage.setItem(`cinder:onboarded:${session.id}`, "1");
+    setShowOnboarding(false);
+  }
+
   return (
     <Shell session={session} onLogout={logout} view={view} setView={setView} unread={myUnread}>
+      {showOnboarding && <OnboardingModal onDone={dismissOnboarding} />}
       {toast && <Toast msg={toast.msg} type={toast.type} />}
 
       {view==="dashboard" && (
@@ -387,19 +404,58 @@ export default function App() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ONBOARDING MODAL
+// ═══════════════════════════════════════════════════════════════
+const ONBOARD_STEPS = [
+  { icon:"🔥", title:"Welcome to Cinder", body:"Cinder is your IT Help Desk training platform. You'll work through real-world IT scenarios, document your troubleshooting process, and build hands-on skills every lab day." },
+  { icon:"🧪", title:"My Labs", body:"This is where your weekly lab ticket appears. Each ticket is a scenario your instructor assigned — read the instructions carefully before starting on the physical equipment." },
+  { icon:"📓", title:"Lab Documentation", body:"As you troubleshoot, document every step in the Lab Documentation section. Record what you tried, what commands you ran, what you observed, and how you resolved the issue. This IS your lab report." },
+  { icon:"📖", title:"Knowledge Base", body:"The Knowledge Base is a shared class reference. After completing a lab, consider submitting an article explaining what you learned. Your classmates will benefit from it." },
+  { icon:"✅", title:"You're ready!", body:"That's the quick tour. Your instructor will push a lab ticket to you each week. Check My Labs at the start of every lab session. Good luck!" },
+];
+
+function OnboardingModal({onDone}) {
+  const [step,setStep]=useState(0);
+  const s=ONBOARD_STEPS[step];
+  const isLast=step===ONBOARD_STEPS.length-1;
+  return (
+    <div style={{position:"fixed",inset:0,background:"#0D0D0Dcc",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000,fontFamily:"'Inter',sans-serif"}}>
+      <div style={{background:"#1A1A1A",border:"1px solid #242424",borderRadius:16,padding:40,maxWidth:460,width:"90%",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:16}}>{s.icon}</div>
+        <div style={{fontFamily:"'Raleway',sans-serif",fontSize:22,fontWeight:800,color:"#F0EDE8",marginBottom:12,letterSpacing:"-0.01em"}}>{s.title}</div>
+        <div style={{fontSize:14,color:"#8A7868",lineHeight:1.8,marginBottom:32}}>{s.body}</div>
+        {/* Step dots */}
+        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:28}}>
+          {ONBOARD_STEPS.map((_,i)=>(
+            <div key={i} style={{width:i===step?20:6,height:6,borderRadius:3,background:i===step?"#E8922E":"#2A2A2A",transition:"width 0.2s"}} />
+          ))}
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          {step>0&&<button onClick={()=>setStep(s=>s-1)} style={{flex:1,background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:8,padding:"12px",fontSize:13,cursor:"pointer"}}>Back</button>}
+          <button onClick={isLast?onDone:()=>setStep(s=>s+1)}
+            style={{flex:2,background:"#E8922E",border:"none",color:"#0D0D0D",borderRadius:8,padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {isLast?"Get Started →":"Next →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // LOGIN
 // ═══════════════════════════════════════════════════════════════
 function Login({ onSignIn }) {
   function getStoredCodes() { try { return JSON.parse(localStorage.getItem("cinder:codes")||"{}"); } catch { return {}; } }
   function saveCode(a, c) { const m=getStoredCodes(); m[a.toLowerCase().trim()]=c.toUpperCase(); localStorage.setItem("cinder:codes",JSON.stringify(m)); }
 
-  const [tab, setTab]       = useState("signin");
-  const [alias, setAlias]   = useState("");
+  const [tab, setTab]         = useState("signin");
+  const [alias, setAlias]     = useState("");
   const [classCode, setClassCode] = useState("");
-  const [pass, setPass]     = useState("");
+  const [extraCodes, setExtraCodes] = useState([]); // additional class codes for join
+  const [pass, setPass]       = useState("");
   const [confirm, setConfirm] = useState("");
-  const [cohort, setCohort] = useState("net-hw");
-  const [err, setErr]       = useState("");
+  const [err, setErr]         = useState("");
   const [loading, setLoading] = useState(false);
 
   function handleAliasChange(val) {
@@ -432,40 +488,41 @@ function Login({ onSignIn }) {
 
   async function handleJoin() {
     setErr(""); setLoading(true);
-    if (!classCode.trim() || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
+    const allCodes = [classCode.trim(), ...extraCodes.map(c=>c.trim())].filter(Boolean);
+    if (!allCodes.length || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
     if (pass !== confirm) { setErr("Passwords do not match."); setLoading(false); return; }
     if (pass.length < 6)  { setErr("Password must be at least 6 characters."); setLoading(false); return; }
 
-    // Validate class code
-    const { data: cls, error: clsErr } = await supabase
-      .from("classes")
-      .select("id, name")
-      .ilike("code", classCode.trim())
-      .single();
-    if (clsErr || !cls) { setErr("Class code not found. Check with your instructor."); setLoading(false); return; }
+    // Validate all class codes
+    const classResults = await Promise.all(allCodes.map(code=>
+      supabase.from("classes").select("id, name, code").ilike("code", code).single()
+    ));
+    const badCode = classResults.findIndex(r=>r.error||!r.data);
+    if (badCode>=0) { setErr(`Class code "${allCodes[badCode]}" not found. Check with your instructor.`); setLoading(false); return; }
+    const classes = classResults.map(r=>r.data);
+    const primaryClass = classes[0];
 
-    // Check alias not already taken in this class
-    const { data: existing } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("alias", alias.trim())
-      .eq("class_id", cls.id)
-      .maybeSingle();
+    // Check alias not already taken in primary class
+    const { data: existing } = await supabase.from("profiles").select("id")
+      .eq("alias", alias.trim()).eq("class_id", primaryClass.id).maybeSingle();
     if (existing) { setErr("That alias is already taken in this class. Choose another."); setLoading(false); return; }
 
-    const email = makeEmail(alias.trim(), classCode.trim());
+    const email = makeEmail(alias.trim(), allCodes[0]);
     const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
     if (signUpErr) { setErr(signUpErr.message); setLoading(false); return; }
 
+    // Create profile
     const { error: profErr } = await supabase.from("profiles").insert({
-      id: data.user.id,
-      alias: alias.trim(),
-      role: "student",
-      class_id: cls.id,
-      cohort,
+      id: data.user.id, alias: alias.trim(), role: "student", class_id: primaryClass.id,
     });
     if (profErr) { setErr("Account created but profile failed. Contact your instructor."); setLoading(false); return; }
-    saveCode(alias.trim(), classCode.trim());
+
+    // Enroll in all classes via junction table
+    await supabase.from("profile_classes").insert(
+      classes.map(c=>({ profile_id: data.user.id, class_id: c.id }))
+    );
+
+    saveCode(alias.trim(), allCodes[0]);
     const profile = await onSignIn(data.user.id);
     if (!profile) setErr("Joined but profile missing — contact your instructor.");
     setLoading(false);
@@ -500,19 +557,24 @@ function Login({ onSignIn }) {
               style={inputStyle} placeholder="Your alias" />
           </Field>
           {(tab==="join" || !codeKnown) && (
-            <Field label="Class Code">
+            <Field label={tab==="join" ? "Class Code(s)" : "Class Code"}>
               <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
-                style={inputStyle} placeholder="Class code (e.g. FALL2026-NET101) — not the class name" />
-            </Field>
-          )}
-
-          {tab==="join" && (
-            <Field label="Track">
-              <select value={cohort} onChange={e=>setCohort(e.target.value)} style={inputStyle}>
-                <option value="net-hw">Networking + Hardware</option>
-                <option value="cyber">Cybersecurity</option>
-                <option value="all">All Tracks</option>
-              </select>
+                style={{...inputStyle, marginBottom: tab==="join"?6:0}}
+                placeholder="e.g. FALL2026-NET (from your instructor)" />
+              {tab==="join" && <>
+                {extraCodes.map((code,i)=>(
+                  <div key={i} style={{display:"flex",gap:6,marginBottom:6}}>
+                    <input value={code} onChange={e=>{const n=[...extraCodes];n[i]=e.target.value;setExtraCodes(n);setErr("");}}
+                      style={{...inputStyle,flex:1}} placeholder={`Additional class code ${i+2}`} />
+                    <button onClick={()=>setExtraCodes(extraCodes.filter((_,j)=>j!==i))}
+                      style={{background:"none",border:"1px solid #7f1d1d44",color:"#f87171",borderRadius:6,padding:"0 10px",cursor:"pointer",fontSize:16}}>×</button>
+                  </div>
+                ))}
+                <button onClick={()=>setExtraCodes([...extraCodes,""])}
+                  style={{background:"none",border:"1px dashed #4A3828",color:"#6A5848",borderRadius:6,padding:"6px 12px",fontSize:11,cursor:"pointer",width:"100%",marginTop:2}}>
+                  + Add another class
+                </button>
+              </>}
             </Field>
           )}
 
@@ -1028,22 +1090,26 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
 // LAB MANAGER (Instructor)
 // ═══════════════════════════════════════════════════════════════
 function LabManager({session,classStudents,customScenarios,onActivate}) {
-  const [courseTab,setCourseTab]=useState("net");
+  const myClasses = session.classes||[];
+  const [activeClassId,setActiveClassId]=useState(myClasses[0]?.id||null);
   const [expandWeek,setExpandWeek]=useState(null);
   const [assignMode,setAssignMode]=useState("broadcast");
   const [selectedStudents,setSelectedStudents]=useState([]);
   const [pushing,setPushing]=useState(false);
-  const [scenarioOverride,setScenarioOverride]=useState({}); // week -> scenarioId
+  const [scenarioOverride,setScenarioOverride]=useState({});
 
-  const course=courseById(courseTab);
-  const courseStudents=classStudents.filter(u=>
-    courseTab==="cyber"?u.cohort==="cyber":u.cohort!=="cyber");
+  const activeClass = myClasses.find(c=>c.id===activeClassId)||myClasses[0];
+  const courseTab = activeClass?.course_id||"net";
+  const course = courseById(courseTab);
+
+  // Students enrolled in the active class specifically
+  const courseStudents = classStudents.filter(u=>u.enrolled_class_id===activeClassId);
 
   // Merge built-in + custom for this course
   const builtIn=SEED_SCENARIOS.filter(s=>s.courseId===courseTab);
   const custom=(customScenarios||[]).filter(s=>s.course_id===courseTab);
-  const allScenarios=[...builtIn,...custom.map(s=>({...s,courseId:s.course_id,id:s.id}))];
-  const scenarios=builtIn; // default week slots still from built-in
+  const allScenarios=[...builtIn,...custom.map(s=>({...s,courseId:s.course_id}))];
+  const scenarios=builtIn;
 
   function toggleStudent(uid) {
     setSelectedStudents(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
@@ -1059,27 +1125,33 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
     const assignees=assignMode==="broadcast"?courseStudents.map(u=>u.id):selectedStudents;
     if(assignees.length===0) return;
     setPushing(true);
-    await onActivate(courseTab,week,scenario.id,assignMode,assignees);
+    await onActivate(courseTab,week,scenario.id,assignMode,assignees,activeClassId);
     setPushing(false);
     setExpandWeek(null); setSelectedStudents([]);
   }
 
   return (
     <div style={{maxWidth:900}}>
-      <PageTitle title="Lab Manager" sub="Assign and track lab scenarios by week." />
+      <PageTitle title="Lab Manager" sub="Assign lab scenarios by class and week." />
 
-      {/* Course tabs */}
-      <div style={{display:"flex",gap:8,marginBottom:24}}>
-        {COURSES.map(c=>(
-          <button key={c.id} onClick={()=>{setCourseTab(c.id);setExpandWeek(null);}}
-            style={{padding:"8px 18px",borderRadius:8,fontSize:13,cursor:"pointer",
-              background:courseTab===c.id?c.color+"22":"#1A1A1A",
-              color:courseTab===c.id?c.color:"#8A7868",
-              border:`1px solid ${courseTab===c.id?c.color+"55":"#242424"}`,
-              fontWeight:courseTab===c.id?700:400}}>
-            {c.icon} {c.label}
-          </button>
-        ))}
+      {myClasses.length===0 && <EmptyState msg="You aren't enrolled in any classes yet. Join a class first." />}
+
+      {/* Class tabs */}
+      <div style={{display:"flex",gap:8,marginBottom:24,flexWrap:"wrap"}}>
+        {myClasses.map(c=>{
+          const courseInfo=courseById(c.course_id)||{color:"#E8922E",icon:"📋"};
+          const isActive=activeClassId===c.id;
+          return (
+            <button key={c.id} onClick={()=>{setActiveClassId(c.id);setExpandWeek(null);setSelectedStudents([]);}}
+              style={{padding:"8px 18px",borderRadius:8,fontSize:13,cursor:"pointer",
+                background:isActive?courseInfo.color+"22":"#1A1A1A",
+                color:isActive?courseInfo.color:"#8A7868",
+                border:`1px solid ${isActive?courseInfo.color+"55":"#242424"}`,
+                fontWeight:isActive?700:400}}>
+              {courseInfo.icon} {c.name}
+            </button>
+          );
+        })}
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
