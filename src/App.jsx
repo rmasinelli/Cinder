@@ -390,29 +390,41 @@ export default function App() {
 // LOGIN
 // ═══════════════════════════════════════════════════════════════
 function Login({ onSignIn }) {
-  const storedCode = localStorage.getItem("cinder:classCode") || "";
-  const [tab, setTab]           = useState("signin");
-  const [classCode, setClassCode] = useState(storedCode);
-  const [alias, setAlias]       = useState("");
-  const [pass, setPass]         = useState("");
-  const [confirm, setConfirm]   = useState("");
-  const [cohort, setCohort]     = useState("net-hw");
-  const [err, setErr]           = useState("");
-  const [loading, setLoading]   = useState(false);
+  function getStoredCodes() { try { return JSON.parse(localStorage.getItem("cinder:codes")||"{}"); } catch { return {}; } }
+  function saveCode(a, c) { const m=getStoredCodes(); m[a.toLowerCase().trim()]=c.toUpperCase(); localStorage.setItem("cinder:codes",JSON.stringify(m)); }
+
+  const [tab, setTab]       = useState("signin");
+  const [alias, setAlias]   = useState("");
+  const [classCode, setClassCode] = useState("");
+  const [pass, setPass]     = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [cohort, setCohort] = useState("net-hw");
+  const [err, setErr]       = useState("");
+  const [loading, setLoading] = useState(false);
+
+  function handleAliasChange(val) {
+    setAlias(val);
+    setErr("");
+    const saved = getStoredCodes()[val.toLowerCase().trim()];
+    if (saved) setClassCode(saved);
+    else if (tab === "signin") setClassCode("");
+  }
 
   function makeEmail(a, c) {
     return `${a.toLowerCase().replace(/\s+/g,"_")}@${c.toLowerCase().replace(/\s+/g,"_")}.cinder.io`;
   }
 
+  const codeKnown = !!getStoredCodes()[alias.toLowerCase().trim()];
+
   async function handleSignIn() {
     setErr(""); setLoading(true);
     if (!alias.trim() || !pass) { setErr("Alias and password required."); setLoading(false); return; }
-    const code = classCode.trim() || storedCode;
+    const code = classCode.trim();
     if (!code) { setErr("Enter your class code."); setLoading(false); return; }
     const email = makeEmail(alias.trim(), code);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
     if (error) { setErr("Invalid alias or password."); setLoading(false); return; }
-    localStorage.setItem("cinder:classCode", code.toUpperCase());
+    saveCode(alias.trim(), code);
     const profile = await onSignIn(data.user.id);
     if (!profile) setErr("Account found but profile missing — contact your instructor.");
     setLoading(false);
@@ -453,7 +465,7 @@ function Login({ onSignIn }) {
       cohort,
     });
     if (profErr) { setErr("Account created but profile failed. Contact your instructor."); setLoading(false); return; }
-    localStorage.setItem("cinder:classCode", classCode.trim().toUpperCase());
+    saveCode(alias.trim(), classCode.trim());
     const profile = await onSignIn(data.user.id);
     if (!profile) setErr("Joined but profile missing — contact your instructor.");
     setLoading(false);
@@ -483,14 +495,16 @@ function Login({ onSignIn }) {
             {tabBtn("join","Join Class")}
           </div>
 
-          <Field label="Class Code">
-            <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
-              style={inputStyle} placeholder="e.g. FALL2026-NET101" />
-          </Field>
           <Field label="Alias">
-            <input value={alias} onChange={e=>{setAlias(e.target.value);setErr("");}}
-              style={inputStyle} placeholder="Choose a name — not your real name" />
+            <input value={alias} onChange={e=>handleAliasChange(e.target.value)}
+              style={inputStyle} placeholder="Your alias" />
           </Field>
+          {(tab==="join" || !codeKnown) && (
+            <Field label="Class Code">
+              <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="e.g. FALL2026-NET101" />
+            </Field>
+          )}
 
           {tab==="join" && (
             <Field label="Track">
