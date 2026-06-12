@@ -105,11 +105,12 @@ export default function App() {
 
   // ── Load profile from Supabase after auth ──────────────────────
   const loadProfile = useCallback(async (userId) => {
-    const { data: profile } = await supabase
+    const { data: profile, error } = await supabase
       .from("profiles")
       .select("*, classes(name, code)")
       .eq("id", userId)
       .single();
+    if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
       setSession({
         id: profile.id,
@@ -121,7 +122,9 @@ export default function App() {
         classCode: profile.classes?.code || "",
       });
       setView("dashboard");
+      return profile;
     }
+    return null;
   }, []);
 
   useEffect(()=>{
@@ -189,7 +192,7 @@ export default function App() {
       Loading Cinder by Ember…
     </div>
   );
-  if(!session) return <Login />;
+  if(!session) return <Login onSignIn={loadProfile} />;
 
   return (
     <Shell session={session} onLogout={logout} view={view} setView={setView} unread={myUnread}>
@@ -319,7 +322,7 @@ export default function App() {
 // ═══════════════════════════════════════════════════════════════
 // LOGIN
 // ═══════════════════════════════════════════════════════════════
-function Login() {
+function Login({ onSignIn }) {
   const [tab, setTab]           = useState("signin"); // "signin" | "join"
   const [classCode, setClassCode] = useState("");
   const [alias, setAlias]       = useState("");
@@ -337,8 +340,10 @@ function Login() {
     setErr(""); setLoading(true);
     if (!classCode.trim() || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
     const email = makeEmail(alias.trim(), classCode.trim());
-    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
-    if (error) setErr("Invalid class code, alias, or password.");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) { setErr("Invalid class code, alias, or password."); setLoading(false); return; }
+    const profile = await onSignIn(data.user.id);
+    if (!profile) setErr("Account found but profile missing — contact your instructor.");
     setLoading(false);
   }
 
