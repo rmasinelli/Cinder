@@ -196,12 +196,37 @@ export default function App() {
       // Load all students enrolled in any class this admin manages
       const classIds = (session.classes||[]).map(c=>c.id).filter(Boolean);
       if (classIds.length > 0) {
-        supabase.from("profile_classes").select("profile_id, class_id, profiles(id,alias,role,cohort,class_id)")
-          .in("class_id", classIds)
-          .then(({data})=>{
-            const students = (data||[]).map(r=>({...r.profiles, enrolled_class_id: r.class_id})).filter(s=>s&&s.role==="student");
-            setClassStudents(students);
-          });
+        Promise.all([
+          // Junction-table enrollments (post patch-6)
+          supabase.from("profile_classes")
+            .select("profile_id, class_id, profiles(id,alias,role,cohort,class_id)")
+            .in("class_id", classIds),
+          // Legacy: profiles with class_id set directly (pre patch-6)
+          supabase.from("profiles")
+            .select("id,alias,role,cohort,class_id")
+            .in("class_id", classIds),
+        ]).then(([junctionRes, legacyRes]) => {
+          const seen = new Set();
+          const all = [];
+          // Junction rows first
+          for (const r of (junctionRes.data||[])) {
+            if (!r.profiles) continue;
+            const key = r.profiles.id + r.class_id;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            all.push({...r.profiles, enrolled_class_id: r.class_id});
+          }
+          // Legacy rows — use their own class_id
+          for (const p of (legacyRes.data||[])) {
+            if (!p || p.role === "admin") continue;
+            const key = p.id + p.class_id;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            all.push({...p, enrolled_class_id: p.class_id});
+          }
+          console.log("classStudents loaded:", all);
+          setClassStudents(all);
+        });
       }
       supabase.from("ticket_templates").select("*").order("course_id").order("week")
         .then(({data})=>{ if(data) setCustomScenarios(data); });
@@ -1608,11 +1633,16 @@ function Inbox({session,notifs,onRead,onReadAll,onOpen}) {
 
 function AdminPanel({session, classStudents, tickets, onSaveTickets, showToast}) {
   const myClasses = session.classes || [];
+  const [search, setSearch] = useState("");
+
+  const filtered = search.trim()
+    ? classStudents.filter(s => s.alias?.toLowerCase().includes(search.toLowerCase()))
+    : classStudents;
 
   // Group students by class
   const byClass = myClasses.map(cls => ({
     cls,
-    students: classStudents.filter(s => s.enrolled_class_id === cls.id),
+    students: filtered.filter(s => s.enrolled_class_id === cls.id),
   }));
 
   const totalStudents = classStudents.length;
@@ -1620,6 +1650,9 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, showToast})
   return (
     <div style={{maxWidth:900}}>
       <PageTitle title="Admin Panel" sub={`${totalStudents} enrolled student${totalStudents!==1?"s":""} across ${myClasses.length} class${myClasses.length!==1?"es":""}`} />
+
+      <input value={search} onChange={e=>setSearch(e.target.value)}
+        placeholder="Search by alias…" style={{...inputStyle, marginBottom:20, maxWidth:320}} />
 
       {/* Enrolled Students by Class */}
       {byClass.map(({cls, students}) => (
