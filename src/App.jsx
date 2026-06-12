@@ -483,12 +483,10 @@ function Login({ onSignIn }) {
             {tabBtn("join","Join Class")}
           </div>
 
-          {(tab==="join" || (tab==="signin" && !storedCode)) && (
-            <Field label="Class Code">
-              <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
-                style={inputStyle} placeholder="e.g. FALL2026-NET101" />
-            </Field>
-          )}
+          <Field label="Class Code">
+            <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
+              style={inputStyle} placeholder="e.g. FALL2026-NET101" />
+          </Field>
           <Field label="Alias">
             <input value={alias} onChange={e=>{setAlias(e.target.value);setErr("");}}
               style={inputStyle} placeholder="Choose a name — not your real name" />
