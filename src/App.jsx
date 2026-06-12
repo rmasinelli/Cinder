@@ -330,7 +330,7 @@ function Login() {
   const [loading, setLoading]   = useState(false);
 
   function makeEmail(a, c) {
-    return `${a.toLowerCase().replace(/\s+/g,"_")}@${c.toLowerCase().replace(/\s+/g,"_")}.cinder.local`;
+    return `${a.toLowerCase().replace(/\s+/g,"_")}@${c.toLowerCase().replace(/\s+/g,"_")}.cinder.io`;
   }
 
   async function handleSignIn() {
