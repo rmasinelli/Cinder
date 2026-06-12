@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "./lib/supabase.js";
 import { COURSES, courseById } from "./data/courses.js";
 import { SCENARIOS } from "./data/scenarios.js";
 import {
@@ -102,7 +103,29 @@ export default function App() {
   const [selected,setSelected]     = useState(null);
   const [toast,setToast]           = useState(null);
 
+  // ── Load profile from Supabase after auth ──────────────────────
+  const loadProfile = useCallback(async (userId) => {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("*, classes(name, code)")
+      .eq("id", userId)
+      .single();
+    if (profile) {
+      setSession({
+        id: profile.id,
+        name: profile.alias,
+        role: profile.role,
+        cohort: profile.cohort || "net-hw",
+        class_id: profile.class_id,
+        className: profile.classes?.name || "",
+        classCode: profile.classes?.code || "",
+      });
+      setView("dashboard");
+    }
+  }, []);
+
   useEffect(()=>{
+    // Load app data (localStorage for now; Supabase migration in next phase)
     (async()=>{
       const u=await load("hd:users",SEED_USERS);
       const t=await load("hd:tickets",SEED_TICKETS);
@@ -111,9 +134,24 @@ export default function App() {
       const k=await load("hd:kb",SEED_KB);
       const inc=await load("hd:incidents",SEED_INCIDENTS);
       setUsers(u); setTickets(t); setNotifs(n); setActiveLabs(al); setKb(k); setIncidents(inc);
+
+      // Restore Supabase session if one exists
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      if (authSession) await loadProfile(authSession.user.id);
+
       setReady(true);
     })();
-  },[]);
+
+    // Keep session in sync
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+      if (authSession) {
+        await loadProfile(authSession.user.id);
+      } else {
+        setSession(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  },[loadProfile]);
 
   function showToast(msg,type="success") { setToast({msg,type}); setTimeout(()=>setToast(null),3500); }
 
@@ -129,12 +167,10 @@ export default function App() {
     await persistNotifs(next);
   }
 
-  function login(email,password) {
-    const u=users.find(x=>x.email===email&&x.password===password);
-    if(!u) return false;
-    setSession(u); setView("dashboard"); return true;
+  async function logout() {
+    await supabase.auth.signOut();
+    setSession(null); setView("dashboard"); setSelected(null);
   }
-  function logout() { setSession(null); setView("dashboard"); setSelected(null); }
 
   const myUnread = session ? notifs.filter(n=>n.toId===session.id&&!n.read).length : 0;
 
@@ -153,7 +189,7 @@ export default function App() {
       Loading Cinder by Ember…
     </div>
   );
-  if(!session) return <Login users={users} onLogin={login} />;
+  if(!session) return <Login />;
 
   return (
     <Shell session={session} onLogout={logout} view={view} setView={setView} unread={myUnread}>
@@ -283,39 +319,134 @@ export default function App() {
 // ═══════════════════════════════════════════════════════════════
 // LOGIN
 // ═══════════════════════════════════════════════════════════════
-function Login({users,onLogin}) {
-  const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [err,setErr]=useState("");
-  const hints=[
-    {label:"Student (Net/HW)", email:"arivera@ember.io", pass:"student123"},
-    {label:"Student (Cyber)",  email:"mlee@ember.io",    pass:"student123"},
-    {label:"Technician",       email:"storres@ember.io", pass:"tech123"},
-    {label:"Instructor",       email:"instructor@ember.io",pass:"admin123"},
-  ];
+function Login() {
+  const [tab, setTab]           = useState("signin"); // "signin" | "join"
+  const [classCode, setClassCode] = useState("");
+  const [alias, setAlias]       = useState("");
+  const [pass, setPass]         = useState("");
+  const [confirm, setConfirm]   = useState("");
+  const [cohort, setCohort]     = useState("net-hw");
+  const [err, setErr]           = useState("");
+  const [loading, setLoading]   = useState(false);
+
+  function makeEmail(a, c) {
+    return `${a.toLowerCase().replace(/\s+/g,"_")}@${c.toLowerCase().replace(/\s+/g,"_")}.cinder.local`;
+  }
+
+  async function handleSignIn() {
+    setErr(""); setLoading(true);
+    if (!classCode.trim() || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
+    const email = makeEmail(alias.trim(), classCode.trim());
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) setErr("Invalid class code, alias, or password.");
+    setLoading(false);
+  }
+
+  async function handleJoin() {
+    setErr(""); setLoading(true);
+    if (!classCode.trim() || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
+    if (pass !== confirm) { setErr("Passwords do not match."); setLoading(false); return; }
+    if (pass.length < 6)  { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+
+    // Validate class code
+    const { data: cls, error: clsErr } = await supabase
+      .from("classes")
+      .select("id, name")
+      .eq("code", classCode.trim().toUpperCase())
+      .single();
+    if (clsErr || !cls) { setErr("Class code not found. Check with your instructor."); setLoading(false); return; }
+
+    // Check alias not already taken in this class
+    const { data: existing } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("alias", alias.trim())
+      .eq("class_id", cls.id)
+      .maybeSingle();
+    if (existing) { setErr("That alias is already taken in this class. Choose another."); setLoading(false); return; }
+
+    const email = makeEmail(alias.trim(), classCode.trim());
+    const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
+    if (signUpErr) { setErr(signUpErr.message); setLoading(false); return; }
+
+    const { error: profErr } = await supabase.from("profiles").insert({
+      id: data.user.id,
+      alias: alias.trim(),
+      role: "student",
+      class_id: cls.id,
+      cohort,
+    });
+    if (profErr) { setErr("Account created but profile failed. Contact your instructor."); setLoading(false); return; }
+    // onAuthStateChange will pick up the new session automatically
+    setLoading(false);
+  }
+
+  const tabBtn = (id, label) => (
+    <button onClick={()=>{setTab(id);setErr("");}}
+      style={{flex:1,padding:"10px 0",background:tab===id?"#E8922E":"transparent",
+        color:tab===id?"#0D0D0D":"#6A5848",border:"none",borderRadius:6,
+        fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",textTransform:"uppercase"}}>
+      {label}
+    </button>
+  );
+
   return (
     <div style={{minHeight:"100vh",background:"#0D0D0D",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Raleway:wght@700;800&display=swap');`}</style>
-      <div style={{width:440}}>
+      <div style={{width:420}}>
         <div style={{textAlign:"center",marginBottom:40}}>
           <div style={{fontSize:11,letterSpacing:"0.3em",color:"#6A5848",textTransform:"uppercase",marginBottom:8}}>Cinder by Ember</div>
           <div style={{fontFamily:"'Raleway',sans-serif",fontSize:36,fontWeight:800,color:"#F0EDE8",letterSpacing:"-0.02em"}}>Cinder<span style={{color:"#E8922E"}}>.</span></div>
-          <div style={{fontSize:12,color:"#6A5848",marginTop:6}}>Networking · Hardware · Cybersecurity</div>
+          <div style={{fontSize:12,color:"#6A5848",marginTop:6}}>IT Help Desk Training System</div>
         </div>
         <div style={{background:"#1A1A1A",border:"1px solid #242424",borderRadius:12,padding:32}}>
-          <Field label="Email"><input value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&onLogin(email,pass)||setErr("Invalid credentials.")} style={inputStyle} placeholder="you@ember.io" /></Field>
-          <Field label="Password"><input value={pass} type="password" onChange={e=>{setPass(e.target.value);setErr("");}} onKeyDown={e=>{if(e.key==="Enter"){if(!onLogin(email,pass))setErr("Invalid credentials.");}}} style={inputStyle} placeholder="••••••••" /></Field>
-          {err&&<div style={{color:"#f87171",fontSize:12,marginBottom:12}}>{err}</div>}
-          <button onClick={()=>{if(!onLogin(email,pass))setErr("Invalid credentials.");}} style={btnPrimary}>Sign In →</button>
-          <div style={{marginTop:24,borderTop:"1px solid #242424",paddingTop:20}}>
-            <div style={{fontSize:11,color:"#6A5848",marginBottom:10,letterSpacing:"0.1em",textTransform:"uppercase"}}>Quick Login (Demo)</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              {hints.map(h=>(
-                <button key={h.label} onClick={()=>{setEmail(h.email);setPass(h.pass);}}
-                  style={{background:"#0D0D0D",border:"1px solid #242424",color:"#B8A898",borderRadius:6,padding:"7px 4px",fontSize:11,cursor:"pointer"}}>
-                  {h.label}
-                </button>
-              ))}
-            </div>
+          <div style={{display:"flex",gap:4,background:"#0D0D0D",borderRadius:8,padding:4,marginBottom:24}}>
+            {tabBtn("signin","Sign In")}
+            {tabBtn("join","Join Class")}
           </div>
+
+          <Field label="Class Code">
+            <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
+              style={inputStyle} placeholder="e.g. FALL2026-NET101" />
+          </Field>
+          <Field label="Alias">
+            <input value={alias} onChange={e=>{setAlias(e.target.value);setErr("");}}
+              style={inputStyle} placeholder="Choose a name — not your real name" />
+          </Field>
+
+          {tab==="join" && (
+            <Field label="Track">
+              <select value={cohort} onChange={e=>setCohort(e.target.value)} style={inputStyle}>
+                <option value="net-hw">Networking + Hardware</option>
+                <option value="cyber">Cybersecurity</option>
+                <option value="all">All Tracks</option>
+              </select>
+            </Field>
+          )}
+
+          <Field label="Password">
+            <input value={pass} type="password" onChange={e=>{setPass(e.target.value);setErr("");}}
+              style={inputStyle} placeholder="••••••••"
+              onKeyDown={e=>e.key==="Enter"&&(tab==="signin"?handleSignIn():handleJoin())} />
+          </Field>
+
+          {tab==="join" && (
+            <Field label="Confirm Password">
+              <input value={confirm} type="password" onChange={e=>{setConfirm(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="••••••••"
+                onKeyDown={e=>e.key==="Enter"&&handleJoin()} />
+            </Field>
+          )}
+
+          {err && <div style={{color:"#f87171",fontSize:12,marginBottom:12}}>{err}</div>}
+
+          <button onClick={tab==="signin"?handleSignIn:handleJoin} style={{...btnPrimary,opacity:loading?0.6:1}} disabled={loading}>
+            {loading ? "Please wait…" : tab==="signin" ? "Sign In →" : "Join Class →"}
+          </button>
+
+          <p style={{fontSize:11,color:"#4A3828",textAlign:"center",marginTop:16,lineHeight:1.6}}>
+            No personal information is collected.<br/>Your alias is the only identifier stored.
+          </p>
         </div>
       </div>
     </div>

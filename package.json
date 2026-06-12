@@ -9,6 +9,7 @@
     "deploy": "npm run build && gh-pages -d dist"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -17,5 +18,5 @@
     "gh-pages": "^6.1.1",
     "vite": "^5.1.0"
   },
-  "description": "Cinder by Ember \u2014 IT Help Desk Training System"
+  "description": "Cinder by Ember — IT Help Desk Training System"
 }
