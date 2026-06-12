@@ -109,10 +109,13 @@ export default function App() {
 
   // ── Load profile from Supabase after auth ──────────────────────
   const loadProfile = useCallback(async (userId) => {
-    const [{ data: profile, error }, { data: memberships }] = await Promise.all([
+    const [profileRes, membershipRes] = await Promise.all([
       supabase.from("profiles").select("*, classes(name, code, course_id)").eq("id", userId).single(),
       supabase.from("profile_classes").select("class_id, classes(id, name, code, course_id)").eq("profile_id", userId),
     ]);
+    const { data: profile, error } = profileRes;
+    const memberships = membershipRes.data;
+    if (membershipRes.error) console.warn("profile_classes load error:", membershipRes.error);
     if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
       setSession({
@@ -123,7 +126,9 @@ export default function App() {
         class_id: profile.class_id,
         className: profile.classes?.name || "",
         classCode: profile.classes?.code || "",
-        classes: (memberships||[]).map(m=>m.classes).filter(Boolean),
+        classes: (memberships||[]).length > 0
+          ? (memberships||[]).map(m=>m.classes).filter(Boolean)
+          : profile.classes ? [profile.classes] : [],
       });
       setView("dashboard");
       if (!localStorage.getItem(`cinder:onboarded:${userId}`)) {
