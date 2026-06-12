@@ -118,7 +118,6 @@ export default function App() {
     const { data: profile, error } = profileRes;
     const memberships = membershipRes.data;
     if (membershipRes.error) console.warn("profile_classes load error:", membershipRes.error);
-    console.log("loadProfile — profile:", profile, "error:", error, "memberships:", memberships);
     if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
       setSession({
@@ -354,6 +353,9 @@ export default function App() {
       )}
       {view==="my-tickets" && (
         <MyTickets session={session} tickets={tickets} users={users}
+          assignedTickets={assignedTickets}
+          onSaveNote={saveLabNote}
+          onStatusChange={updateAssignedTicketStatus}
           onOpen={id=>{setSelected(id);setView("ticket");}} />
       )}
       {view==="queue" && (session.role==="tech"||session.role==="admin") && (
@@ -385,11 +387,6 @@ export default function App() {
           customScenarios={customScenarios}
           onActivate={pushLabAssignment}
         />
-      )}
-      {view==="my-labs" && session.role==="student" && (
-        <MyLabs session={session} assignedTickets={assignedTickets}
-          onStatusChange={updateAssignedTicketStatus}
-          onSaveNote={saveLabNote} />
       )}
       {view==="scenarios" && session.role==="admin" && (
         <ScenarioLibrary
@@ -434,10 +431,10 @@ export default function App() {
 // ═══════════════════════════════════════════════════════════════
 const ONBOARD_STEPS = [
   { icon:"🔥", title:"Welcome to Cinder", body:"Cinder is your IT Help Desk training platform. You'll work through real-world IT scenarios, document your troubleshooting process, and build hands-on skills every lab day." },
-  { icon:"🧪", title:"My Labs", body:"This is where your weekly lab ticket appears. Each ticket is a scenario your instructor assigned — read the instructions carefully before starting on the physical equipment." },
-  { icon:"📓", title:"Lab Documentation", body:"As you troubleshoot, document every step in the Lab Documentation section. Record what you tried, what commands you ran, what you observed, and how you resolved the issue. This IS your lab report." },
+  { icon:"🎫", title:"Your Ticket Queue", body:"When your instructor assigns a lab, a ticket lands in your My Tickets queue — just like a real client request. Read it carefully, then work through the issue on the physical equipment." },
+  { icon:"📓", title:"Ember Field Journal", body:"As you work each ticket, document your process in the Field Journal sections: Initial Hypothesis, Troubleshooting Steps, and Resolution. This documentation is your lab submission — treat it like a professional work log." },
   { icon:"📖", title:"Knowledge Base", body:"The Knowledge Base is a shared class reference. After completing a lab, consider submitting an article explaining what you learned. Your classmates will benefit from it." },
-  { icon:"✅", title:"You're ready!", body:"That's the quick tour. Your instructor will push a lab ticket to you each week. Check My Labs at the start of every lab session. Good luck!" },
+  { icon:"✅", title:"You're ready!", body:"That's the quick tour. Your instructor will push a ticket to your queue each lab session. Open it in My Tickets, read the client request, work the problem, and document everything. Good luck!" },
 ];
 
 function OnboardingModal({onDone}) {
@@ -732,7 +729,6 @@ function Shell({session,onLogout,view,setView,unread,children}) {
     {id:"queue",      label:"Ticket Queue", roles:["tech","admin"],           icon:"▤"},
     {id:"kb",         label:"Knowledge Base",roles:["student","tech","admin"],icon:"📖"},
     {id:"ir",         label:"Incidents",    roles:["student","tech","admin"], icon:"🚨"},
-    {id:"my-labs",    label:"My Labs",       roles:["student"],               icon:"🧪"},
     {id:"labs",       label:"Lab Manager",  roles:["admin"],                  icon:"🔬"},
     {id:"scenarios",  label:"Scenarios",    roles:["admin"],                  icon:"📋"},
     {id:"inbox",      label:"Inbox",        roles:["student","tech","admin"], icon:"✉"},
@@ -965,14 +961,121 @@ function SubmitTicket({session,courses,onSubmit}) {
 // ═══════════════════════════════════════════════════════════════
 // MY TICKETS
 // ═══════════════════════════════════════════════════════════════
-function MyTickets({session,tickets,users,onOpen}) {
+function MyTickets({session,tickets,users,assignedTickets,onOpen,onSaveNote,onStatusChange}) {
+  const [selectedAssigned,setSelectedAssigned]=useState(null);
   const mine=tickets.filter(t=>t.submittedBy===session.id||t.assignedTo===session.id)
     .sort((a,b)=>new Date(b.created)-new Date(a.created));
+
+  // ── Assigned ticket detail view (student opens a lab ticket) ──
+  if(selectedAssigned) {
+    const at = assignedTickets.find(t=>t.id===selectedAssigned);
+    if(at) {
+      const course=courseById(at.course_id);
+      const scenario = SCENARIOS.find(s=>s.id===at.scenario_id);
+      const requester = scenario ? PERSON_BY_ID[scenario.requesterId] : null;
+      const orgColor = requester ? (ORG_COLOR[requester.org]||"#E8922E") : "#E8922E";
+      const statusOptions=["Open","In Progress","Resolved","Closed"];
+      return (
+        <div style={{maxWidth:880}}>
+          <button onClick={()=>setSelectedAssigned(null)}
+            style={{background:"none",border:"none",color:"#6A5848",cursor:"pointer",fontSize:13,marginBottom:20,padding:0}}>
+            ← Back to My Tickets
+          </button>
+          <div style={{marginBottom:20}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+              {course&&<span style={{fontSize:11,color:course.color,fontWeight:700,background:course.color+"18",border:`1px solid ${course.color}33`,borderRadius:4,padding:"1px 8px"}}>{course.icon} {course.id.toUpperCase()}</span>}
+              {at.group_tag&&<span style={{fontSize:11,color:"#a78bfa",background:"#a78bfa18",borderRadius:4,padding:"1px 8px"}}>👥 {at.group_tag}</span>}
+            </div>
+            <div style={{fontFamily:"'Raleway',sans-serif",fontSize:24,fontWeight:700,color:"#F0EDE8"}}>{at.title.replace(/^\[W\d+\] /,"")}</div>
+            <div style={{marginTop:8,display:"flex",gap:8,flexWrap:"wrap"}}>
+              {badge(at.status,STATUS_COLOR[at.status])}
+              {badge(at.priority,PRIORITY_COLOR[at.priority])}
+            </div>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:20,alignItems:"start"}}>
+            <div>
+              <Card style={{marginBottom:16}}>
+                {requester && (
+                  <div style={{marginBottom:14}}>
+                    <SectionLabel>Requester</SectionLabel>
+                    <RequesterChip requesterId={scenario.requesterId} />
+                  </div>
+                )}
+                <SectionLabel>Description</SectionLabel>
+                <p style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:0,whiteSpace:"pre-wrap"}}>{at.description}</p>
+              </Card>
+              <Card>
+                <FieldJournal assignedTicketId={at.id} studentId={session.id} onSave={onSaveNote} />
+              </Card>
+            </div>
+            <div>
+              <Card>
+                <SectionLabel>Ticket Details</SectionLabel>
+                <Field label="Update Status">
+                  <select value={at.status} onChange={e=>onStatusChange(at.id,e.target.value)} style={inputStyle}>
+                    {statusOptions.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+                <DetailRow label="Priority" val={at.priority} />
+                {course&&<DetailRow label="Course" val={`${course.icon} ${course.label}`} />}
+                {at.lab_assignments?.week_label&&<DetailRow label="Assignment" val={at.lab_assignments.week_label} />}
+              </Card>
+            </div>
+          </div>
+        </div>
+      );
+    }
+  }
+
+  const hasAssigned = assignedTickets && assignedTickets.length>0;
+  const total = mine.length + (assignedTickets?.length||0);
+
   return (
     <div>
-      <PageTitle title="My Tickets" sub={`${mine.length} ticket${mine.length!==1?"s":""}`} />
-      {mine.length===0?<EmptyState msg="No tickets yet."/>
-        :<TicketTable tickets={mine} users={users} session={session} onOpen={onOpen} showSLA showCourse />}
+      <PageTitle title="My Tickets" sub={`${total} ticket${total!==1?"s":""}`} />
+
+      {/* Assigned lab tickets */}
+      {hasAssigned && (
+        <div style={{marginBottom:32}}>
+          <SectionLabel>Active Assignments</SectionLabel>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {assignedTickets.map(t=>{
+              const course=courseById(t.course_id);
+              const isOpen=!["Resolved","Closed"].includes(t.status);
+              return (
+                <div key={t.id} onClick={()=>setSelectedAssigned(t.id)}
+                  style={{background:"#1A1A1A",border:`1px solid ${isOpen?"#E8922E44":"#242424"}`,
+                    borderLeft:`3px solid ${isOpen?"#E8922E":"#2A2A2A"}`,
+                    borderRadius:12,padding:"16px 20px",cursor:"pointer",
+                    display:"flex",alignItems:"center",gap:16}}
+                  onMouseEnter={e=>e.currentTarget.style.background="#201C18"}
+                  onMouseLeave={e=>e.currentTarget.style.background="#1A1A1A"}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:600,color:"#F0EDE8",marginBottom:6}}>{t.title.replace(/^\[W\d+\] /,"")}</div>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                      {badge(t.status,STATUS_COLOR[t.status])}
+                      {badge(t.priority,PRIORITY_COLOR[t.priority])}
+                      {course&&<span style={{fontSize:11,color:course.color}}>{course.icon} {course.label}</span>}
+                      {t.group_tag&&<span style={{fontSize:11,color:"#a78bfa"}}>👥 {t.group_tag}</span>}
+                    </div>
+                  </div>
+                  <div style={{color:"#E8922E",fontSize:12,flexShrink:0}}>Open →</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Submitted tickets */}
+      {mine.length>0 && (
+        <div>
+          {hasAssigned&&<SectionLabel>Submitted Tickets</SectionLabel>}
+          <TicketTable tickets={mine} users={users} session={session} onOpen={onOpen} showSLA showCourse />
+        </div>
+      )}
+      {total===0&&<EmptyState msg="No tickets yet." />}
     </div>
   );
 }
@@ -1126,33 +1229,23 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
         <div>
           <Card style={{marginBottom:16}}><SLABar ticket={{...ticket,priority}} /></Card>
 
-          {/* Lab scenario callout */}
-          {ticket.labScenarioId&&(
-            <div style={{background:"#0D0D0D",border:`1px solid ${course?.color||"#242424"}33`,borderRadius:10,padding:"14px 18px",marginBottom:16}}>
-              <div style={{fontSize:11,color:course?.color||"#B8A898",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:6}}>📋 Lab Scenario — Week {ticket.week}</div>
-              <div style={{color:"#B8A898",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{ticket.description}</div>
-            </div>
-          )}
-
-          {!ticket.labScenarioId&&(
-            <Card style={{marginBottom:16}}>
-              {ticket.requesterId && (
-                <div style={{marginBottom:14}}>
-                  <SectionLabel>Requester</SectionLabel>
-                  <RequesterChip requesterId={ticket.requesterId} />
-                </div>
-              )}
-              <SectionLabel>Description</SectionLabel>
-              <p style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:0,whiteSpace:"pre-wrap"}}>{ticket.description}</p>
-              {!ticket.requesterId && (
-                <div style={{marginTop:12,fontSize:12,color:"#6A5848"}}>Submitted by <strong style={{color:"#8A7868"}}>{nameOf(ticket.submittedBy)}</strong> · {fmt(ticket.created)}</div>
-              )}
-            </Card>
-          )}
+          <Card style={{marginBottom:16}}>
+            {ticket.requesterId && (
+              <div style={{marginBottom:14}}>
+                <SectionLabel>Requester</SectionLabel>
+                <RequesterChip requesterId={ticket.requesterId} />
+              </div>
+            )}
+            <SectionLabel>Description</SectionLabel>
+            <p style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:0,whiteSpace:"pre-wrap"}}>{ticket.description}</p>
+            {!ticket.requesterId && (
+              <div style={{marginTop:12,fontSize:12,color:"#6A5848"}}>Submitted by <strong style={{color:"#8A7868"}}>{nameOf(ticket.submittedBy)}</strong> · {fmt(ticket.created)}</div>
+            )}
+          </Card>
 
           <Card>
             <SectionLabel>Activity Log</SectionLabel>
-            {ticket.notes.length===0&&<div style={{color:"#6A5848",fontSize:13,marginBottom:16}}>No notes yet. {ticket.labScenarioId?"Document your lab progress here.":""}</div>}
+            {ticket.notes.length===0&&<div style={{color:"#6A5848",fontSize:13,marginBottom:16}}>No notes yet.</div>}
             {ticket.notes.map((n,i)=>(
               <div key={i} style={{borderLeft:"2px solid #242424",paddingLeft:12,marginBottom:14}}>
                 <div style={{fontSize:12,color:"#8A7868"}}><strong>{nameOf(n.author)}</strong> · {fmt(n.ts)}</div>
@@ -1161,7 +1254,7 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
             ))}
             <textarea value={note} onChange={e=>setNote(e.target.value)}
               style={{...inputStyle,height:100,resize:"vertical",marginTop:8}}
-              placeholder={ticket.labScenarioId?"Document your steps, findings, and commands used…":"Add a note…"} />
+              placeholder="Add a note…" />
             <button onClick={addNote} style={{...btnPrimary,marginTop:8}} disabled={!note.trim()}>Post Note</button>
           </Card>
         </div>
@@ -1316,10 +1409,22 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
                       ))}
                     </select>
                   </Field>
-                  {/* Description preview */}
+                  {/* Description + instructor notes preview */}
                   {(()=>{
                     const sel=scenarioOverride[week]?allScenarios.find(s=>s.id===scenarioOverride[week]):scenario;
-                    return sel ? <div style={{color:"#8A7868",fontSize:12,lineHeight:1.7,marginBottom:20,whiteSpace:"pre-wrap",background:"#1A1A1A",borderRadius:8,padding:"12px 16px"}}>{sel.description}</div> : null;
+                    if(!sel) return null;
+                    return (
+                      <div style={{marginBottom:20}}>
+                        <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"#6A5848",marginBottom:6,fontWeight:700}}>Client-facing ticket (what students see)</div>
+                        <div style={{color:"#8A7868",fontSize:12,lineHeight:1.7,whiteSpace:"pre-wrap",background:"#1A1A1A",borderRadius:8,padding:"12px 16px",marginBottom:12}}>{sel.description}</div>
+                        {sel.instructorNotes&&(
+                          <>
+                            <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"#E8922E",marginBottom:6,fontWeight:700}}>🔬 Physical Lab Task (instructor only)</div>
+                            <div style={{color:"#B8A898",fontSize:12,lineHeight:1.7,whiteSpace:"pre-wrap",background:"#E8922E08",border:"1px solid #E8922E22",borderRadius:8,padding:"12px 16px"}}>{sel.instructorNotes}</div>
+                          </>
+                        )}
+                      </div>
+                    );
                   })()}
                   <Field label="Assignment Mode">
                     <select value={assignMode} onChange={e=>setAssignMode(e.target.value)} style={inputStyle}>
@@ -1553,10 +1658,18 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// LAB NOTES
+// FIELD JOURNAL  (replaces free-text LabNotes)
+// Mirrors the Ember Field Journal sections:
+//   1. Initial Hypothesis
+//   2. Troubleshooting Steps
+//   3. Resolution
+//   4. Connections
+// Content is stored as JSON in the lab_notes.content column.
 // ═══════════════════════════════════════════════════════════════
-function LabNotes({assignedTicketId, studentId, onSave}) {
-  const [content,setContent]=useState("");
+const BLANK_JOURNAL = { hypothesis:"", steps:"", resolution:"", connections:"" };
+
+function FieldJournal({assignedTicketId, studentId, onSave}) {
+  const [journal,setJournal]=useState(BLANK_JOURNAL);
   const [saved,setSaved]=useState(true);
   const [loading,setLoading]=useState(true);
 
@@ -1564,28 +1677,69 @@ function LabNotes({assignedTicketId, studentId, onSave}) {
     supabase.from("lab_notes").select("content")
       .eq("assigned_ticket_id",assignedTicketId).eq("student_id",studentId)
       .maybeSingle()
-      .then(({data})=>{ if(data) setContent(data.content||""); setLoading(false); });
+      .then(({data})=>{
+        if(data?.content) {
+          try { setJournal({...BLANK_JOURNAL,...JSON.parse(data.content)}); }
+          catch { setJournal({...BLANK_JOURNAL, steps: data.content}); }
+        }
+        setLoading(false);
+      });
   },[assignedTicketId,studentId]);
 
+  function update(field,val) { setJournal(j=>({...j,[field]:val})); setSaved(false); }
+
   async function handleSave() {
-    await onSave(assignedTicketId,content);
+    await onSave(assignedTicketId, JSON.stringify(journal));
     setSaved(true);
   }
 
-  if(loading) return <div style={{color:"#6A5848",fontSize:13}}>Loading notes…</div>;
+  if(loading) return <div style={{color:"#6A5848",fontSize:13}}>Loading…</div>;
+
+  const ta = (field, placeholder, rows=4) => (
+    <textarea value={journal[field]} onChange={e=>update(field,e.target.value)} rows={rows}
+      style={{...inputStyle,resize:"vertical",lineHeight:1.7,fontFamily:"'JetBrains Mono',monospace",fontSize:12}}
+      placeholder={placeholder} />
+  );
 
   return (
     <div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-        <SectionLabel>Lab Documentation</SectionLabel>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+        <div style={{fontFamily:"'Raleway',sans-serif",fontSize:16,fontWeight:700,color:"#E8922E",letterSpacing:"-0.01em"}}>Ember Field Journal</div>
         {!saved&&<span style={{fontSize:11,color:"#f59e0b"}}>Unsaved changes</span>}
       </div>
-      <textarea value={content} onChange={e=>{setContent(e.target.value);setSaved(false);}}
-        style={{...inputStyle,minHeight:280,resize:"vertical",lineHeight:1.7,fontFamily:"'JetBrains Mono',monospace",fontSize:12}}
-        placeholder={"Document your troubleshooting process here.\n\nInclude:\n• Steps you took\n• Commands run\n• What you observed\n• How you resolved the issue\n• What you learned"} />
+      <div style={{fontSize:12,color:"#6A5848",marginBottom:20,lineHeight:1.6}}>
+        Complete each section as you work through the ticket. This is your lab submission.
+      </div>
+
+      <div style={{display:"flex",flexDirection:"column",gap:20}}>
+        <div>
+          <SectionLabel>1 · Initial Hypothesis</SectionLabel>
+          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>Before you touch anything — what do you think is causing this issue and why?</div>
+          {ta("hypothesis","Based on the ticket, I believe the issue is…",4)}
+        </div>
+
+        <div>
+          <SectionLabel>2 · Troubleshooting Steps</SectionLabel>
+          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>Document each step: what you did, the tool or command used, and what you observed.</div>
+          {ta("steps","Step 1: [What I did] → [What I observed]\nStep 2: …",10)}
+        </div>
+
+        <div>
+          <SectionLabel>3 · Resolution</SectionLabel>
+          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>How did you resolve the issue? What was the root cause?</div>
+          {ta("resolution","The issue was resolved by… The root cause was…",4)}
+        </div>
+
+        <div>
+          <SectionLabel>4 · Connections</SectionLabel>
+          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>What did this connect to from class? What would you do differently next time?</div>
+          {ta("connections","This connects to… Next time I would…",4)}
+        </div>
+      </div>
+
       <button onClick={handleSave} disabled={saved}
-        style={{...btnPrimary,marginTop:12,opacity:saved?0.5:1,background:saved?"#166534":"#E8922E",color:"#F0EDE8"}}>
-        {saved?"Notes Saved ✓":"Save Notes"}
+        style={{...btnPrimary,marginTop:20,opacity:saved?0.5:1,background:saved?"#166534":"#E8922E",color:"#F0EDE8"}}>
+        {saved?"Journal Saved ✓":"Save Journal"}
       </button>
     </div>
   );
@@ -1633,7 +1787,7 @@ function MyLabs({session, assignedTickets, onStatusChange, onSaveNote}) {
         </Card>
 
         <Card>
-          <LabNotes assignedTicketId={ticket.id} studentId={session.id} onSave={onSaveNote} />
+          <FieldJournal assignedTicketId={ticket.id} studentId={session.id} onSave={onSaveNote} />
         </Card>
       </div>
     );
