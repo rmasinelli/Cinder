@@ -116,6 +116,7 @@ export default function App() {
     const { data: profile, error } = profileRes;
     const memberships = membershipRes.data;
     if (membershipRes.error) console.warn("profile_classes load error:", membershipRes.error);
+    console.log("loadProfile — profile:", profile, "error:", error, "memberships:", memberships);
     if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
       setSession({
