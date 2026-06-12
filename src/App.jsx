@@ -2491,10 +2491,18 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, showToast})
           <div style={{background:"#0D0D0D",border:"1px solid #7f1d1d44",borderRadius:8,padding:16,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div>
               <div style={{color:"#fca5a5",fontSize:13,fontWeight:600}}>Reset Ticket Data</div>
-              <div style={{color:"#6A5848",fontSize:12}}>Wipes all tickets and reloads seed data.</div>
+              <div style={{color:"#6A5848",fontSize:12}}>Reloads seed tickets · clears all assigned tickets · clears all lab notes.</div>
             </div>
-            <button onClick={async()=>{await onSaveTickets(SEED_TICKETS); showToast("Reset.");}}
-              style={{background:"#7f1d1d",border:"none",color:"#fca5a5",borderRadius:6,padding:"8px 16px",fontSize:12,cursor:"pointer"}}>Reset</button>
+            <button onClick={async()=>{
+              if(!window.confirm("This will delete ALL assigned tickets and lab notes for every student. This cannot be undone. Continue?")) return;
+              const { error } = await supabase.rpc("admin_reset_assigned_tickets");
+              if(error) { showToast("Reset failed: "+error.message,"error"); return; }
+              await onSaveTickets(SEED_TICKETS);
+              showToast("All ticket data reset to seed state.");
+            }}
+              style={{background:"#7f1d1d",border:"none",color:"#fca5a5",borderRadius:6,padding:"8px 16px",fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
+              Reset All
+            </button>
           </div>
         </Card>
       </>}
