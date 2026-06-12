@@ -405,6 +405,7 @@ export default function App() {
         <AdminPanel session={session} classStudents={classStudents}
           tickets={tickets}
           onSaveTickets={persistTickets}
+          onResetAssigned={()=>setAssignedTickets([])}
           showToast={showToast} />
       )}
       {view==="kb" && (
@@ -2339,7 +2340,7 @@ function Inbox({session,notifs,onRead,onReadAll,onOpen}) {
   );
 }
 
-function AdminPanel({session, classStudents, tickets, onSaveTickets, showToast}) {
+function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssigned, showToast}) {
   const allClasses = session.classes || [];
   const [search,   setSearch]   = useState("");
   const [filterQ,  setFilterQ]  = useState(""); // quarter filter
@@ -2498,7 +2499,8 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, showToast})
               const { error } = await supabase.rpc("admin_reset_assigned_tickets");
               if(error) { showToast("Reset failed: "+error.message,"error"); return; }
               await onSaveTickets(SEED_TICKETS);
-              showToast("All ticket data reset to seed state.");
+              onResetAssigned?.();
+              showToast("All assigned tickets cleared. Students will see an empty queue.");
             }}
               style={{background:"#7f1d1d",border:"none",color:"#fca5a5",borderRadius:6,padding:"8px 16px",fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
               Reset All
