@@ -423,7 +423,7 @@ function Login({ onSignIn }) {
     if (!code) { setErr("Enter your class code."); setLoading(false); return; }
     const email = makeEmail(alias.trim(), code);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-    if (error) { setErr(`Failed (trying: ${email})`); setLoading(false); return; }
+    if (error) { setErr("Invalid alias or password. Check your class code is correct."); setLoading(false); return; }
     saveCode(alias.trim(), code);
     const profile = await onSignIn(data.user.id);
     if (!profile) setErr("Account found but profile missing — contact your instructor.");
@@ -502,7 +502,7 @@ function Login({ onSignIn }) {
           {(tab==="join" || !codeKnown) && (
             <Field label="Class Code">
               <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
-                style={inputStyle} placeholder="e.g. FALL2026-NET101" />
+                style={inputStyle} placeholder="Class code (e.g. FALL2026-NET101) — not the class name" />
             </Field>
           )}
 
