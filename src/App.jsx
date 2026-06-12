@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./lib/supabase.js";
 import { COURSES, courseById } from "./data/courses.js";
+import { CLIENTS } from "./data/clients.js";
 import { SCENARIOS } from "./data/scenarios.js";
 import {
   SEED_USERS, SEED_TICKETS, SEED_KB, SEED_INCIDENTS,
@@ -553,13 +554,48 @@ function Login({ onSignIn }) {
   }
 
   const tabBtn = (id, label) => (
-    <button onClick={()=>{setTab(id);setErr("");}}
+    <button onClick={()=>{setTab(id);setErr("");setOk("");}}
       style={{flex:1,padding:"10px 0",background:tab===id?"#E8922E":"transparent",
         color:tab===id?"#0D0D0D":"#6A5848",border:"none",borderRadius:6,
         fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",textTransform:"uppercase"}}>
       {label}
     </button>
   );
+
+  // ── Reset password tab state ──
+  const [resetPin, setResetPin]         = useState("");
+  const [newPass, setNewPass]           = useState("");
+  const [confirmNew, setConfirmNew]     = useState("");
+  const [ok, setOk]                     = useState("");
+
+  async function handleReset() {
+    setErr(""); setOk(""); setLoading(true);
+    if (!alias.trim() || !classCode.trim() || !resetPin.trim() || !newPass) {
+      setErr("All fields required."); setLoading(false); return;
+    }
+    if (newPass !== confirmNew) { setErr("Passwords do not match."); setLoading(false); return; }
+    if (newPass.length < 6)    { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+    const { data, error } = await supabase.rpc("reset_student_password", {
+      p_alias: alias.trim(), p_class_code: classCode.trim(),
+      p_pin: resetPin.trim(), p_new_password: newPass,
+    });
+    setLoading(false);
+    if (error) { setErr("Reset failed. Check your details and try again."); return; }
+    if (data === "ok") {
+      setOk("Password updated. You can now sign in.");
+      setResetPin(""); setNewPass(""); setConfirmNew("");
+      saveCode(alias.trim(), classCode.trim());
+      setTimeout(()=>{ setTab("signin"); setOk(""); }, 2000);
+    } else if (data === "invalid_credentials") {
+      setErr("Alias, class code, or PIN is incorrect.");
+    } else if (data === "invalid_class") {
+      setErr("Class code not found.");
+    } else if (data === "password_too_short") {
+      setErr("Password must be at least 6 characters.");
+    } else {
+      setErr("Reset failed — contact your instructor.");
+    }
+  }
 
   return (
     <div style={{minHeight:"100vh",background:"#0D0D0D",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
@@ -574,57 +610,110 @@ function Login({ onSignIn }) {
           <div style={{display:"flex",gap:4,background:"#0D0D0D",borderRadius:8,padding:4,marginBottom:24}}>
             {tabBtn("signin","Sign In")}
             {tabBtn("join","Join Class")}
+            {tabBtn("reset","Reset Password")}
           </div>
 
-          <Field label="Alias">
-            <input value={alias} onChange={e=>handleAliasChange(e.target.value)}
-              style={inputStyle} placeholder="Your alias" />
-          </Field>
-          {(tab==="join" || !codeKnown) && (
-            <Field label={tab==="join" ? "Class Code(s)" : "Class Code"}>
-              <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
-                style={{...inputStyle, marginBottom: tab==="join"?6:0}}
-                placeholder="e.g. FALL2026-NET (from your instructor)" />
-              {tab==="join" && <>
-                {extraCodes.map((code,i)=>(
-                  <div key={i} style={{display:"flex",gap:6,marginBottom:6}}>
-                    <input value={code} onChange={e=>{const n=[...extraCodes];n[i]=e.target.value;setExtraCodes(n);setErr("");}}
-                      style={{...inputStyle,flex:1}} placeholder={`Additional class code ${i+2}`} />
-                    <button onClick={()=>setExtraCodes(extraCodes.filter((_,j)=>j!==i))}
-                      style={{background:"none",border:"1px solid #7f1d1d44",color:"#f87171",borderRadius:6,padding:"0 10px",cursor:"pointer",fontSize:16}}>×</button>
-                  </div>
-                ))}
-                <button onClick={()=>setExtraCodes([...extraCodes,""])}
-                  style={{background:"none",border:"1px dashed #4A3828",color:"#6A5848",borderRadius:6,padding:"6px 12px",fontSize:11,cursor:"pointer",width:"100%",marginTop:2}}>
-                  + Add another class
-                </button>
-              </>}
+          {/* ── SIGN IN ── */}
+          {tab==="signin" && <>
+            <Field label="Alias">
+              <input value={alias} onChange={e=>handleAliasChange(e.target.value)}
+                style={inputStyle} placeholder="Your alias" autoComplete="username" />
             </Field>
-          )}
+            {!codeKnown && (
+              <Field label="Class Code">
+                <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
+                  style={inputStyle} placeholder="e.g. FALL2026-NET" />
+              </Field>
+            )}
+            <Field label="Password">
+              <input value={pass} type="password" onChange={e=>{setPass(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="••••••••" autoComplete="current-password"
+                onKeyDown={e=>e.key==="Enter"&&handleSignIn()} />
+            </Field>
+            {err && <div style={{color:"#f87171",fontSize:12,marginBottom:12}}>{err}</div>}
+            <button onClick={handleSignIn} style={{...btnPrimary,opacity:loading?0.6:1}} disabled={loading}>
+              {loading ? "Please wait…" : "Sign In →"}
+            </button>
+            <p style={{fontSize:11,color:"#4A3828",textAlign:"center",marginTop:16}}>
+              Forgot your password? Use the Reset Password tab.<br/>You'll need the PIN from your instructor.
+            </p>
+          </>}
 
-          <Field label="Password">
-            <input value={pass} type="password" onChange={e=>{setPass(e.target.value);setErr("");}}
-              style={inputStyle} placeholder="••••••••"
-              onKeyDown={e=>e.key==="Enter"&&(tab==="signin"?handleSignIn():handleJoin())} />
-          </Field>
-
-          {tab==="join" && (
+          {/* ── JOIN CLASS ── */}
+          {tab==="join" && <>
+            <Field label="Alias">
+              <input value={alias} onChange={e=>handleAliasChange(e.target.value)}
+                style={inputStyle} placeholder="Choose an alias" />
+            </Field>
+            <Field label="Class Code(s)">
+              <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
+                style={{...inputStyle, marginBottom:6}}
+                placeholder="e.g. FALL2026-NET (from your instructor)" />
+              {extraCodes.map((code,i)=>(
+                <div key={i} style={{display:"flex",gap:6,marginBottom:6}}>
+                  <input value={code} onChange={e=>{const n=[...extraCodes];n[i]=e.target.value;setExtraCodes(n);setErr("");}}
+                    style={{...inputStyle,flex:1}} placeholder={`Additional class code ${i+2}`} />
+                  <button onClick={()=>setExtraCodes(extraCodes.filter((_,j)=>j!==i))}
+                    style={{background:"none",border:"1px solid #7f1d1d44",color:"#f87171",borderRadius:6,padding:"0 10px",cursor:"pointer",fontSize:16}}>×</button>
+                </div>
+              ))}
+              <button onClick={()=>setExtraCodes([...extraCodes,""])}
+                style={{background:"none",border:"1px dashed #4A3828",color:"#6A5848",borderRadius:6,padding:"6px 12px",fontSize:11,cursor:"pointer",width:"100%",marginTop:2}}>
+                + Add another class
+              </button>
+            </Field>
+            <Field label="Password">
+              <input value={pass} type="password" onChange={e=>{setPass(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="••••••••" />
+            </Field>
             <Field label="Confirm Password">
               <input value={confirm} type="password" onChange={e=>{setConfirm(e.target.value);setErr("");}}
                 style={inputStyle} placeholder="••••••••"
                 onKeyDown={e=>e.key==="Enter"&&handleJoin()} />
             </Field>
-          )}
+            {err && <div style={{color:"#f87171",fontSize:12,marginBottom:12}}>{err}</div>}
+            <button onClick={handleJoin} style={{...btnPrimary,opacity:loading?0.6:1}} disabled={loading}>
+              {loading ? "Please wait…" : "Join Class →"}
+            </button>
+            <p style={{fontSize:11,color:"#4A3828",textAlign:"center",marginTop:16,lineHeight:1.6}}>
+              No personal information is collected.<br/>Your alias is the only identifier stored.
+            </p>
+          </>}
 
-          {err && <div style={{color:"#f87171",fontSize:12,marginBottom:12}}>{err}</div>}
-
-          <button onClick={tab==="signin"?handleSignIn:handleJoin} style={{...btnPrimary,opacity:loading?0.6:1}} disabled={loading}>
-            {loading ? "Please wait…" : tab==="signin" ? "Sign In →" : "Join Class →"}
-          </button>
-
-          <p style={{fontSize:11,color:"#4A3828",textAlign:"center",marginTop:16,lineHeight:1.6}}>
-            No personal information is collected.<br/>Your alias is the only identifier stored.
-          </p>
+          {/* ── RESET PASSWORD ── */}
+          {tab==="reset" && <>
+            <div style={{background:"#0D0D0D",border:"1px solid #2E2E2E",borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12,color:"#8A7868",lineHeight:1.7}}>
+              Ask your instructor for a reset PIN. Enter it below along with your alias and class code to set a new password.
+            </div>
+            <Field label="Alias">
+              <input value={alias} onChange={e=>handleAliasChange(e.target.value)}
+                style={inputStyle} placeholder="Your alias" />
+            </Field>
+            {!codeKnown && (
+              <Field label="Class Code">
+                <input value={classCode} onChange={e=>{setClassCode(e.target.value);setErr("");}}
+                  style={inputStyle} placeholder="e.g. FALL2026-NET" />
+              </Field>
+            )}
+            <Field label="Reset PIN (from instructor)">
+              <input value={resetPin} onChange={e=>{setResetPin(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="4-digit PIN" maxLength={8} />
+            </Field>
+            <Field label="New Password">
+              <input value={newPass} type="password" onChange={e=>{setNewPass(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="••••••••" />
+            </Field>
+            <Field label="Confirm New Password">
+              <input value={confirmNew} type="password" onChange={e=>{setConfirmNew(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="••••••••"
+                onKeyDown={e=>e.key==="Enter"&&handleReset()} />
+            </Field>
+            {err && <div style={{color:"#f87171",fontSize:12,marginBottom:12}}>{err}</div>}
+            {ok  && <div style={{color:"#86efac",fontSize:12,marginBottom:12}}>{ok}</div>}
+            <button onClick={handleReset} style={{...btnPrimary,opacity:loading?0.6:1}} disabled={loading}>
+              {loading ? "Resetting…" : "Reset Password →"}
+            </button>
+          </>}
         </div>
       </div>
     </div>
@@ -1625,82 +1714,184 @@ function Inbox({session,notifs,onRead,onReadAll,onOpen}) {
 }
 
 function AdminPanel({session, classStudents, tickets, onSaveTickets, showToast}) {
-  const myClasses = session.classes || [];
-  const [search, setSearch] = useState("");
+  const allClasses = session.classes || [];
+  const [search,   setSearch]   = useState("");
+  const [filterQ,  setFilterQ]  = useState(""); // quarter filter
+  const [filterY,  setFilterY]  = useState(""); // year filter
+  const [pinMap,   setPinMap]   = useState({}); // profileId → generated PIN display
+  const [activeTab, setActiveTab] = useState("students"); // "students" | "clients"
 
-  const filtered = search.trim()
+  // Derive available quarters/years from loaded classes
+  const quarters = [...new Set(allClasses.map(c=>c.quarter).filter(Boolean))].sort();
+  const years    = [...new Set(allClasses.map(c=>c.year).filter(Boolean))].sort((a,b)=>b-a);
+
+  const visibleClasses = allClasses.filter(c => {
+    if (filterQ && c.quarter !== filterQ) return false;
+    if (filterY && c.year !== Number(filterY)) return false;
+    return true;
+  });
+
+  const filteredStudents = search.trim()
     ? classStudents.filter(s => s.alias?.toLowerCase().includes(search.toLowerCase()))
     : classStudents;
 
-  // Group students by class
-  const byClass = myClasses.map(cls => ({
+  const byClass = visibleClasses.map(cls => ({
     cls,
-    students: filtered.filter(s => s.enrolled_class_id === cls.id),
+    students: filteredStudents.filter(s => s.enrolled_class_id === cls.id),
   }));
 
   const totalStudents = classStudents.length;
 
+  async function generatePin(student) {
+    const pin = String(Math.floor(1000 + Math.random() * 9000));
+    const { error } = await supabase.rpc("set_student_reset_pin", {
+      p_profile_id: student.id, p_pin: pin,
+    });
+    if (error) { showToast("Failed to set PIN — check Supabase logs."); return; }
+    setPinMap(m => ({...m, [student.id]: pin}));
+  }
+
+  const tabBtn = (id, label) => (
+    <button onClick={()=>setActiveTab(id)}
+      style={{padding:"8px 18px",background:activeTab===id?"#E8922E":"transparent",
+        color:activeTab===id?"#0D0D0D":"#6A5848",border:"none",borderRadius:6,
+        fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",textTransform:"uppercase"}}>
+      {label}
+    </button>
+  );
+
   return (
-    <div style={{maxWidth:900}}>
-      <PageTitle title="Admin Panel" sub={`${totalStudents} enrolled student${totalStudents!==1?"s":""} across ${myClasses.length} class${myClasses.length!==1?"es":""}`} />
+    <div style={{maxWidth:960}}>
+      <PageTitle title="Admin Panel"
+        sub={`${totalStudents} student${totalStudents!==1?"s":""} · ${allClasses.length} class${allClasses.length!==1?"es":""}`} />
 
-      <input value={search} onChange={e=>setSearch(e.target.value)}
-        placeholder="Search by alias…" style={{...inputStyle, marginBottom:20, maxWidth:320}} />
+      {/* Tab bar */}
+      <div style={{display:"flex",gap:4,background:"#1A1A1A",border:"1px solid #242424",borderRadius:8,padding:4,marginBottom:24,width:"fit-content"}}>
+        {tabBtn("students","Enrolled Students")}
+        {tabBtn("clients","Client Directory")}
+      </div>
 
-      {/* Enrolled Students by Class */}
-      {byClass.map(({cls, students}) => (
-        <div key={cls.id} style={{marginBottom:28}}>
-          <Card>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-              <div>
-                <div style={{fontFamily:"'Raleway',sans-serif",fontWeight:700,fontSize:16,color:"#F0EDE8"}}>{cls.name}</div>
-                <div style={{fontSize:12,color:"#6A5848",marginTop:2}}>Code: <span style={{color:"#B8A898",fontFamily:"monospace"}}>{cls.code}</span>{cls.course_id && <span style={{marginLeft:8,color:"#8A7868"}}>· {cls.course_id.toUpperCase()}</span>}</div>
+      {/* ── STUDENTS TAB ── */}
+      {activeTab==="students" && <>
+        {/* Filters */}
+        <div style={{display:"flex",gap:10,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search by alias…" style={{...inputStyle, width:220}} />
+          {quarters.length > 0 && (
+            <select value={filterQ} onChange={e=>setFilterQ(e.target.value)} style={{...inputStyle,width:"auto"}}>
+              <option value="">All quarters</option>
+              {quarters.map(q=><option key={q} value={q}>{q}</option>)}
+            </select>
+          )}
+          {years.length > 0 && (
+            <select value={filterY} onChange={e=>setFilterY(e.target.value)} style={{...inputStyle,width:"auto"}}>
+              <option value="">All years</option>
+              {years.map(y=><option key={y} value={y}>{y}</option>)}
+            </select>
+          )}
+          {(filterQ||filterY||search) && (
+            <button onClick={()=>{setSearch("");setFilterQ("");setFilterY("");}}
+              style={{background:"none",border:"1px solid #2E2E2E",color:"#6A5848",borderRadius:6,padding:"8px 14px",fontSize:12,cursor:"pointer"}}>
+              Clear
+            </button>
+          )}
+        </div>
+
+        {byClass.map(({cls, students}) => (
+          <div key={cls.id} style={{marginBottom:24}}>
+            <Card>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:students.length?16:0}}>
+                <div>
+                  <div style={{fontFamily:"'Raleway',sans-serif",fontWeight:700,fontSize:15,color:"#F0EDE8"}}>{cls.name}</div>
+                  <div style={{fontSize:12,color:"#6A5848",marginTop:3,display:"flex",gap:12,flexWrap:"wrap"}}>
+                    <span>Code: <span style={{color:"#B8A898",fontFamily:"monospace"}}>{cls.code}</span></span>
+                    {cls.course_id && <span style={{color:"#8A7868"}}>{cls.course_id.toUpperCase()}</span>}
+                    {cls.quarter   && <span style={{color:"#8A7868"}}>{cls.quarter} {cls.year||""}</span>}
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:"#6A5848",flexShrink:0}}>{students.length} student{students.length!==1?"s":""}</div>
               </div>
-              <div style={{fontSize:13,color:"#6A5848"}}>{students.length} student{students.length!==1?"s":""}</div>
-            </div>
-            {students.length === 0
-              ? <div style={{color:"#4A3828",fontSize:13,padding:"12px 0"}}>No students enrolled yet.</div>
-              : (
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                  <thead>
-                    <tr style={{borderBottom:"1px solid #242424"}}>
-                      {["Alias","Track",""].map(h=><th key={h} style={{textAlign:"left",padding:"6px 8px",color:"#6A5848",fontSize:11,textTransform:"uppercase",letterSpacing:"0.07em"}}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {students.map(s => (
-                      <tr key={s.id+cls.id} style={{borderBottom:"1px solid #1A1A1A"}}>
-                        <td style={{padding:"9px 8px",color:"#EDE9E3",fontFamily:"monospace"}}>{s.alias}</td>
-                        <td style={{padding:"9px 8px",color:"#8A7868",fontSize:12}}>{s.cohort||"—"}</td>
-                        <td style={{padding:"9px 8px",textAlign:"right"}}>
-                          {badge("student", ROLE_COLOR["student"])}
-                        </td>
+
+              {students.length === 0
+                ? <div style={{color:"#4A3828",fontSize:13}}>No students enrolled yet.</div>
+                : (
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                    <thead>
+                      <tr style={{borderBottom:"1px solid #242424"}}>
+                        {["Alias","Track","Reset PIN",""].map(h=>(
+                          <th key={h} style={{textAlign:"left",padding:"6px 8px",color:"#6A5848",fontSize:11,textTransform:"uppercase",letterSpacing:"0.07em"}}>{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )
-            }
-          </Card>
-        </div>
-      ))}
-
-      {myClasses.length === 0 && (
-        <EmptyState msg="No classes found. Make sure your account has a class assigned in Supabase." />
-      )}
-
-      {/* Danger Zone */}
-      <Card style={{marginTop:8}}>
-        <SectionLabel>Danger Zone</SectionLabel>
-        <div style={{background:"#0D0D0D",border:"1px solid #7f1d1d44",borderRadius:8,padding:16,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div>
-            <div style={{color:"#fca5a5",fontSize:13,fontWeight:600}}>Reset Ticket Data</div>
-            <div style={{color:"#6A5848",fontSize:12}}>Wipes all tickets and reloads seed data.</div>
+                    </thead>
+                    <tbody>
+                      {students.map(s => {
+                        const shownPin = pinMap[s.id];
+                        return (
+                          <tr key={s.id+cls.id} style={{borderBottom:"1px solid #111"}}>
+                            <td style={{padding:"9px 8px",color:"#EDE9E3",fontFamily:"monospace"}}>{s.alias}</td>
+                            <td style={{padding:"9px 8px",color:"#8A7868",fontSize:12}}>{s.cohort||"—"}</td>
+                            <td style={{padding:"9px 8px"}}>
+                              {shownPin
+                                ? <span style={{fontFamily:"monospace",fontSize:15,fontWeight:700,color:"#E8922E",background:"#E8922E15",border:"1px solid #E8922E44",borderRadius:4,padding:"2px 8px"}}>
+                                    {shownPin}
+                                  </span>
+                                : <span style={{color:"#4A3828",fontSize:12}}>—</span>
+                              }
+                            </td>
+                            <td style={{padding:"9px 8px",textAlign:"right"}}>
+                              <button onClick={()=>generatePin(s)}
+                                style={{background:"none",border:"1px solid #2E2E2E",color:"#8A7868",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
+                                {shownPin ? "Regenerate PIN" : "Set PIN"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )
+              }
+            </Card>
           </div>
-          <button onClick={async()=>{await onSaveTickets(SEED_TICKETS); showToast("Reset.");}}
-            style={{background:"#7f1d1d",border:"none",color:"#fca5a5",borderRadius:6,padding:"8px 16px",fontSize:12,cursor:"pointer"}}>Reset</button>
+        ))}
+
+        {visibleClasses.length === 0 && (
+          <EmptyState msg="No classes match the current filter." />
+        )}
+
+        {/* Danger Zone */}
+        <Card style={{marginTop:8}}>
+          <SectionLabel>Danger Zone</SectionLabel>
+          <div style={{background:"#0D0D0D",border:"1px solid #7f1d1d44",borderRadius:8,padding:16,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <div style={{color:"#fca5a5",fontSize:13,fontWeight:600}}>Reset Ticket Data</div>
+              <div style={{color:"#6A5848",fontSize:12}}>Wipes all tickets and reloads seed data.</div>
+            </div>
+            <button onClick={async()=>{await onSaveTickets(SEED_TICKETS); showToast("Reset.");}}
+              style={{background:"#7f1d1d",border:"none",color:"#fca5a5",borderRadius:6,padding:"8px 16px",fontSize:12,cursor:"pointer"}}>Reset</button>
+          </div>
+        </Card>
+      </>}
+
+      {/* ── CLIENT DIRECTORY TAB ── */}
+      {activeTab==="clients" && (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:16}}>
+          {CLIENTS.map(c=>(
+            <Card key={c.id}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                <div style={{fontFamily:"'Raleway',sans-serif",fontWeight:700,fontSize:14,color:"#F0EDE8"}}>{c.company}</div>
+                <span style={{fontSize:10,color:"#6A5848",background:"#0D0D0D",border:"1px solid #242424",borderRadius:4,padding:"2px 7px",whiteSpace:"nowrap",marginLeft:8}}>{c.industry}</span>
+              </div>
+              <div style={{fontSize:12,color:"#B8A898",marginBottom:4}}>
+                <span style={{color:"#6A5848"}}>Contact: </span>{c.contact}
+                <span style={{color:"#4A3828"}}> · {c.title}</span>
+              </div>
+              <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>{c.size}</div>
+              <div style={{fontSize:11,color:"#4A3828",borderTop:"1px solid #242424",paddingTop:8,lineHeight:1.7}}>{c.notes}</div>
+            </Card>
+          ))}
         </div>
-      </Card>
+      )}
     </div>
   );
 }
