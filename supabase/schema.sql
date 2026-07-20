@@ -90,7 +90,9 @@ create policy "classes: admin insert"  on classes for insert with check (is_admi
 create policy "profiles: own read"     on profiles for select using (auth.uid() = id);
 create policy "profiles: admin read"   on profiles for select using (is_admin());
 create policy "profiles: insert own"   on profiles for insert with check (auth.uid() = id);
-create policy "profiles: update own"   on profiles for update using (auth.uid() = id);
+-- Profiles are intentionally not client-updatable. Role and class membership are
+-- authorization data and must only be changed through trusted instructor tooling.
+revoke update on table profiles from authenticated;
 
 -- ticket_templates
 create policy "templates: read all"    on ticket_templates for select using (auth.role() = 'authenticated');
