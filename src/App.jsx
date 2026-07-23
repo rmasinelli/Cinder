@@ -2952,7 +2952,7 @@ function KBEditor({article,session,canPublish,onSave,onCancel}) {
 
   function handleSave(status) {
     const tags=tagInput.split(",").map(t=>t.trim()).filter(Boolean);
-    const updated={...form,tags,status,reviewerId:canPublish&&status!=="draft"?session.id:form.reviewerId,updated:new Date().toISOString()};
+    const updated={...form,tags,status,reviewerId:canPublish&&status!=="draft"?session.id:null,updated:new Date().toISOString()};
     onSave(updated);
   }
 
@@ -2993,9 +2993,9 @@ function KBEditor({article,session,canPublish,onSave,onCancel}) {
           </Field>
         )}
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          <button onClick={()=>handleSave("draft")}
+          <button onClick={()=>handleSave(canPublish?form.status:"draft")}
             style={{...btnPrimary,background:"#242424",color:"#B8A898",flex:1,minWidth:150}}>
-            Save Draft
+            {canPublish?"Save Review Notes":"Save Draft"}
           </button>
           {canPublish&&(
             <>
