@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./lib/supabase.js";
+import { listKnowledgeArticles, saveKnowledgeArticle, deleteKnowledgeArticle } from "./lib/knowledgeBase.js";
 import { COURSES, courseById } from "./data/courses.js";
 import { CLIENTS } from "./data/clients.js";
 import { PERSON_BY_ID, ORG_COLOR } from "./data/people.js";
@@ -149,9 +150,8 @@ export default function App() {
       const t=await load("hd:tickets",SEED_TICKETS);
       const n=await load("hd:notifs",SEED_NOTIFS);
       const al=await load("hd:activeLabs",SEED_ACTIVE_LABS);
-      const k=await load("hd:kb",SEED_KB);
       const inc=await load("hd:incidents",SEED_INCIDENTS);
-      setUsers(u); setTickets(t); setNotifs(n); setActiveLabs(al); setKb(k); setIncidents(inc);
+      setUsers(u); setTickets(t); setNotifs(n); setActiveLabs(al); setKb(SEED_KB); setIncidents(inc);
 
       // Restore Supabase session if one exists
       const { data: { session: authSession } } = await supabase.auth.getSession();
@@ -177,7 +177,6 @@ export default function App() {
   async function persistUsers(next)   { setUsers(next);   await save("hd:users",next); }
   async function persistNotifs(next)  { setNotifs(next);  await save("hd:notifs",next); }
   async function persistLabs(next)    { setActiveLabs(next); await save("hd:activeLabs",next); }
-  async function persistKb(next)      { setKb(next);      await save("hd:kb",next); }
   async function persistIncidents(next){ setIncidents(next); await save("hd:incidents",next); }
 
   async function addNotifs(batch) {
@@ -194,6 +193,14 @@ export default function App() {
   // ── Load class students (admin) or assigned tickets (student) after login ──
   useEffect(()=>{
     if (!session) return;
+
+    listKnowledgeArticles()
+      .then(setKb)
+      .catch(error=>{
+        console.error("knowledge base load error:",error);
+        showToast("Shared knowledge base is not ready. Apply the database migration, then reload.","error");
+      });
+
     if (session.role === "admin") {
       // Admins see ALL classes and ALL students
       Promise.all([
@@ -411,11 +418,40 @@ export default function App() {
       {view==="kb" && (
         <KnowledgeBase session={session} kb={kb}
           onSave={async(article)=>{
-            const exists=kb.find(a=>a.id===article.id);
-            const next=exists?kb.map(a=>a.id===article.id?article:a):[article,...kb];
-            await persistKb(next); showToast(article.status==="published"?"Article published!":"Draft saved.");
+            try {
+              const summary = article.status==="submitted" ? "Submitted for review"
+                : article.status==="published" ? "Published by reviewer"
+                : article.status==="changes_requested" ? "Changes requested"
+                : "Draft updated";
+              const saved = await saveKnowledgeArticle(article,session.id,summary);
+              setKb(current=>{
+                const exists=current.some(a=>a.id===saved.id);
+                return exists?current.map(a=>a.id===saved.id?saved:a):[saved,...current];
+              });
+              const message = saved.status==="published" ? "Article published!"
+                : saved.status==="submitted" ? "Article submitted for review."
+                : saved.status==="changes_requested" ? "Changes requested."
+                : "Draft saved.";
+              showToast(message);
+              return saved;
+            } catch(error) {
+              console.error("knowledge base save error:",error);
+              showToast("Could not save article: "+error.message,"error");
+              return null;
+            }
           }}
-          onDelete={async(id)=>{ await persistKb(kb.filter(a=>a.id!==id)); showToast("Article deleted."); }}
+          onDelete={async(id)=>{
+            try {
+              await deleteKnowledgeArticle(id);
+              setKb(current=>current.filter(a=>a.id!==id));
+              showToast("Article deleted.");
+              return true;
+            } catch(error) {
+              console.error("knowledge base delete error:",error);
+              showToast("Could not delete article: "+error.message,"error");
+              return false;
+            }
+          }}
         />
       )}
       {view==="ir" && (
@@ -2754,7 +2790,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
   const canPublish=session.role==="tech"||session.role==="admin";
 
   const visible=kb
-    .filter(a=>canPublish?true:a.status==="published")
+    .filter(a=>canPublish?true:(a.status==="published"||a.authorId===session.id))
     .filter(a=>catFilter==="all"?true:a.category===catFilter)
     .filter(a=>courseFilter==="all"?true:a.courseId===courseFilter)
     .filter(a=>search===""?true:
@@ -2762,7 +2798,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
       a.body.toLowerCase().includes(search.toLowerCase())||
       a.tags?.some(t=>t.toLowerCase().includes(search.toLowerCase())));
 
-  const drafts=kb.filter(a=>a.status==="draft"&&(a.authorId===session.id||session.role==="admin"));
+  const pendingReview=kb.filter(a=>a.status==="submitted");
 
   function newArticle() {
     const blank={id:"kb-"+Date.now(),title:"",courseId:"net",category:"General",
@@ -2773,7 +2809,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
 
   if(subview==="edit"&&selected) return (
     <KBEditor article={selected} session={session} canPublish={canPublish}
-      onSave={async(a)=>{ await onSave(a); setSelected(a); setSubview("read"); }}
+      onSave={async(a)=>{ const saved=await onSave(a); if(saved){setSelected(saved);setSubview("read");} }}
       onCancel={()=>{ setSubview(kb.find(x=>x.id===selected.id)?"read":"list"); }} />
   );
 
@@ -2781,7 +2817,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
     const art=kb.find(a=>a.id===selected.id)||selected;
     return <KBArticle article={art} session={session} canPublish={canPublish}
       onEdit={()=>{ setSelected(art); setSubview("edit"); }}
-      onDelete={async()=>{ await onDelete(art.id); setSubview("list"); }}
+      onDelete={async()=>{ const deleted=await onDelete(art.id); if(deleted)setSubview("list"); }}
       onBack={()=>setSubview("list")} />;
   }
 
@@ -2803,18 +2839,18 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
       </div>
 
       {/* Pending review (tech/admin only) */}
-      {canPublish&&drafts.filter(a=>a.authorId!==session.id).length>0&&(
+      {canPublish&&pendingReview.length>0&&(
         <div style={{marginBottom:20}}>
-          <SectionLabel>⏳ Pending Review ({drafts.filter(a=>a.authorId!==session.id).length})</SectionLabel>
+          <SectionLabel>⏳ Pending Review ({pendingReview.length})</SectionLabel>
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {drafts.filter(a=>a.authorId!==session.id).map(a=>(
+            {pendingReview.map(a=>(
               <div key={a.id} onClick={()=>{setSelected(a);setSubview("read");}}
                 style={{background:"#0D0D0D",border:"1px solid #f59e0b44",borderLeft:"3px solid #f59e0b",borderRadius:8,padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}
                 onMouseEnter={e=>e.currentTarget.style.background="#181410"}
                 onMouseLeave={e=>e.currentTarget.style.background="#0D0D0D"}>
                 <div>
-                  <div style={{color:"#EDE9E3",fontSize:14,fontWeight:600}}>{a.title||"Untitled Draft"}</div>
-                  <div style={{fontSize:11,color:"#f59e0b",marginTop:2}}>Draft · {a.category}</div>
+                  <div style={{color:"#EDE9E3",fontSize:14,fontWeight:600}}>{a.title||"Untitled Submission"}</div>
+                  <div style={{fontSize:11,color:"#f59e0b",marginTop:2}}>Submitted · {a.category}</div>
                 </div>
                 <span style={{fontSize:12,color:"#f59e0b"}}>Review →</span>
               </div>
@@ -2875,7 +2911,7 @@ function KBArticle({article,session,canPublish,onEdit,onDelete,onBack}) {
       return <p key={i} style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:"4px 0"}}>{parts.map((p,j)=>p.startsWith("`")?<code key={j} style={{background:"#0D0D0D",border:"1px solid #242424",borderRadius:3,padding:"1px 6px",fontSize:12,color:"#E8922E",fontFamily:"monospace"}}>{p.slice(1,-1)}</code>:p)}</p>;
     });
   }
-  const canEdit=session.role==="tech"||session.role==="admin"||article.authorId===session.id;
+  const canEdit=session.role==="tech"||session.role==="admin"||(article.authorId===session.id&&["draft","changes_requested"].includes(article.status));
   return (
     <div style={{maxWidth:800}}>
       <button onClick={onBack} style={{background:"none",border:"none",color:"#6A5848",cursor:"pointer",fontSize:13,marginBottom:20,padding:0}}>← Back to Knowledge Base</button>
@@ -2885,7 +2921,7 @@ function KBArticle({article,session,canPublish,onEdit,onDelete,onBack}) {
           <h1 style={{fontFamily:"'Raleway',sans-serif",fontSize:26,fontWeight:800,color:"#F0EDE8",margin:"8px 0",lineHeight:1.2}}>{article.title}</h1>
           <div style={{fontSize:12,color:"#6A5848",marginBottom:8}}>{article.category} · Updated {fmt(article.updated)}</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {article.status==="draft"&&<span style={{fontSize:11,color:"#f59e0b",background:"#f59e0b18",border:"1px solid #f59e0b44",borderRadius:4,padding:"2px 8px",fontWeight:700}}>DRAFT — Not Published</span>}
+            {article.status!=="published"&&<span style={{fontSize:11,color:article.status==="changes_requested"?"#f87171":"#f59e0b",background:"#f59e0b18",border:"1px solid #f59e0b44",borderRadius:4,padding:"2px 8px",fontWeight:700}}>{article.status.replaceAll("_"," ").toUpperCase()}</span>}
             {article.tags?.map(t=><span key={t} style={{fontSize:11,color:"#6A5848",background:"#242424",borderRadius:3,padding:"2px 7px"}}>#{t}</span>)}
           </div>
         </div>
@@ -2896,6 +2932,12 @@ function KBArticle({article,session,canPublish,onEdit,onDelete,onBack}) {
           </div>
         )}
       </div>
+      {article.reviewNotes&&(
+        <Card style={{marginTop:16,borderColor:"#f59e0b55"}}>
+          <SectionLabel>Instructor Feedback</SectionLabel>
+          <div style={{color:"#B8A898",fontSize:14,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{article.reviewNotes}</div>
+        </Card>
+      )}
       <Card style={{marginTop:16}}>
         <div style={{lineHeight:1.8}}>{renderMd(article.body)}</div>
       </Card>
@@ -2908,16 +2950,16 @@ function KBEditor({article,session,canPublish,onSave,onCancel}) {
   const [tagInput,setTagInput]=useState(article.tags?.join(", ")||"");
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
-  function handleSave(publish) {
+  function handleSave(status) {
     const tags=tagInput.split(",").map(t=>t.trim()).filter(Boolean);
-    const updated={...form,tags,status:publish?"published":"draft",updated:new Date().toISOString()};
+    const updated={...form,tags,status,reviewerId:canPublish&&status!=="draft"?session.id:form.reviewerId,updated:new Date().toISOString()};
     onSave(updated);
   }
 
   return (
     <div style={{maxWidth:800}}>
       <button onClick={onCancel} style={{background:"none",border:"none",color:"#6A5848",cursor:"pointer",fontSize:13,marginBottom:20,padding:0}}>← Cancel</button>
-      <PageTitle title={form.id.startsWith("kb-")?form.title||"New Article":"Edit Article"} sub={form.status==="draft"?"Draft":"Published"} />
+      <PageTitle title={String(form.id).startsWith("kb-")?form.title||"New Article":"Edit Article"} sub={form.status.replaceAll("_"," ")} />
       <Card>
         <Field label="Title">
           <input value={form.title} onChange={e=>set("title",e.target.value)} style={inputStyle} placeholder="Article title" />
@@ -2943,18 +2985,32 @@ function KBEditor({article,session,canPublish,onSave,onCancel}) {
             style={{...inputStyle,height:360,resize:"vertical",fontFamily:"'Inter',sans-serif",fontSize:12,lineHeight:1.7}}
             placeholder={"## Overview\nDescribe the topic here.\n\n## Steps\n1. First step\n2. Second step\n\n## Notes\nAny additional tips."} />
         </Field>
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={()=>handleSave(false)}
-            style={{...btnPrimary,background:"#242424",color:"#B8A898",flex:1}}>
+        {canPublish&&(
+          <Field label="Instructor feedback">
+            <textarea value={form.reviewNotes||""} onChange={e=>set("reviewNotes",e.target.value)}
+              style={{...inputStyle,height:90,resize:"vertical"}}
+              placeholder="Explain what is strong or what the student should revise." />
+          </Field>
+        )}
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button onClick={()=>handleSave("draft")}
+            style={{...btnPrimary,background:"#242424",color:"#B8A898",flex:1,minWidth:150}}>
             Save Draft
           </button>
           {canPublish&&(
-            <button onClick={()=>handleSave(true)} style={{...btnPrimary,flex:1}}>
-              {form.status==="published"?"Update Published Article":"Publish Article"}
-            </button>
+            <>
+              {form.status==="submitted"&&(
+                <button onClick={()=>handleSave("changes_requested")} style={{...btnPrimary,flex:1,minWidth:150,background:"#7f1d1d",color:"#F0EDE8"}}>
+                  Request Changes
+                </button>
+              )}
+              <button onClick={()=>handleSave("published")} style={{...btnPrimary,flex:1,minWidth:150}}>
+                {form.status==="published"?"Update Published Article":"Approve & Publish"}
+              </button>
+            </>
           )}
           {!canPublish&&(
-            <button onClick={()=>handleSave(false)} style={{...btnPrimary,flex:1,background:"#f59e0b",color:"#0D0D0D"}}>
+            <button onClick={()=>handleSave("submitted")} style={{...btnPrimary,flex:1,minWidth:150,background:"#f59e0b",color:"#0D0D0D"}}>
               Submit for Review
             </button>
           )}
