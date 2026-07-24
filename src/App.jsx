@@ -2780,12 +2780,53 @@ function TicketTable({tickets,users,session,onOpen,showAssigned=false,showSLA=fa
 // ═══════════════════════════════════════════════════════════════
 // KNOWLEDGE BASE
 // ═══════════════════════════════════════════════════════════════
+const KB_ARTICLE_TEMPLATE = `## Overview
+Explain the topic in a few clear sentences.
+
+## Why It Matters
+Describe when an IT professional would use this knowledge.
+
+## Key Details
+- Important fact or concept
+- Important fact or concept
+
+## Steps or Example
+1. Start with the first action or example.
+2. Continue in a logical order.
+3. Explain how to confirm the result.
+
+## Common Mistakes
+- Note a likely mistake and how to avoid it.
+
+## Related Topics
+- Add useful tags above so Cinder can connect this article to related knowledge.
+
+## Sources
+- List the lab, documentation, or reference used.`;
+
+const GENERIC_KB_TAGS = new Set(["it","terms and concepts","intro to it","guide","resources","websites","index"]);
+
+function relatedKnowledgeArticles(article,kb) {
+  const articleTags=new Set((article.tags||[]).map(t=>t.toLowerCase()).filter(t=>!GENERIC_KB_TAGS.has(t)));
+  return kb
+    .filter(candidate=>candidate.id!==article.id&&candidate.status==="published")
+    .map(candidate=>{
+      const shared=(candidate.tags||[]).map(t=>t.toLowerCase()).filter(t=>articleTags.has(t)&&!GENERIC_KB_TAGS.has(t));
+      const score=shared.length*10+(candidate.courseId===article.courseId?2:0)+(candidate.category===article.category?1:0);
+      return {...candidate,sharedTags:shared,relatedScore:score};
+    })
+    .filter(candidate=>candidate.sharedTags.length>0)
+    .sort((a,b)=>b.relatedScore-a.relatedScore||a.title.localeCompare(b.title))
+    .slice(0,6);
+}
+
 function KnowledgeBase({session,kb,onSave,onDelete}) {
   const [subview,setSubview]=useState("list"); // list | read | edit
   const [selected,setSelected]=useState(null);
   const [search,setSearch]=useState("");
   const [catFilter,setCatFilter]=useState("all");
   const [courseFilter,setCourseFilter]=useState("all");
+  const [tagFilter,setTagFilter]=useState("");
 
   const canPublish=session.role==="tech"||session.role==="admin";
 
@@ -2793,6 +2834,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
     .filter(a=>canPublish?true:(a.status==="published"||a.authorId===session.id))
     .filter(a=>catFilter==="all"?true:a.category===catFilter)
     .filter(a=>courseFilter==="all"?true:a.courseId===courseFilter)
+    .filter(a=>tagFilter===""?true:a.tags?.some(t=>t.toLowerCase()===tagFilter.toLowerCase()))
     .filter(a=>search===""?true:
       a.title.toLowerCase().includes(search.toLowerCase())||
       a.body.toLowerCase().includes(search.toLowerCase())||
@@ -2802,7 +2844,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
 
   function newArticle() {
     const blank={id:"kb-"+Date.now(),title:"",courseId:"net",category:"General",
-      status:"draft",authorId:session.id,body:"",tags:[],
+      status:"draft",authorId:session.id,body:KB_ARTICLE_TEMPLATE,tags:[],
       created:new Date().toISOString(),updated:new Date().toISOString()};
     setSelected(blank); setSubview("edit");
   }
@@ -2815,7 +2857,11 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
 
   if(subview==="read"&&selected) {
     const art=kb.find(a=>a.id===selected.id)||selected;
+    const related=relatedKnowledgeArticles(art,kb);
     return <KBArticle article={art} session={session} canPublish={canPublish}
+      relatedArticles={related}
+      onOpenRelated={article=>{setSelected(article);setSubview("read");}}
+      onSelectTag={tag=>{setTagFilter(tag);setSelected(null);setSubview("list");}}
       onEdit={()=>{ setSelected(art); setSubview("edit"); }}
       onDelete={async()=>{ const deleted=await onDelete(art.id); if(deleted)setSubview("list"); }}
       onBack={()=>setSubview("list")} />;
@@ -2836,6 +2882,12 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
           <option value="all">All Courses</option>
           {COURSES.map(c=><option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
         </select>
+        {tagFilter&&(
+          <button onClick={()=>setTagFilter("")}
+            style={{background:"#E8922E18",border:"1px solid #E8922E55",color:"#F0B060",borderRadius:6,padding:"8px 12px",fontSize:12,cursor:"pointer"}}>
+            #{tagFilter} ×
+          </button>
+        )}
       </div>
 
       {/* Pending review (tech/admin only) */}
@@ -2892,7 +2944,7 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
   );
 }
 
-function KBArticle({article,session,canPublish,onEdit,onDelete,onBack}) {
+function KBArticle({article,session,canPublish,relatedArticles,onOpenRelated,onSelectTag,onEdit,onDelete,onBack}) {
   const course=courseById(article.courseId);
   // Very simple markdown renderer
   function renderMd(text) {
@@ -2922,7 +2974,9 @@ function KBArticle({article,session,canPublish,onEdit,onDelete,onBack}) {
           <div style={{fontSize:12,color:"#6A5848",marginBottom:8}}>{article.category} · Updated {fmt(article.updated)}</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {article.status!=="published"&&<span style={{fontSize:11,color:article.status==="changes_requested"?"#f87171":"#f59e0b",background:"#f59e0b18",border:"1px solid #f59e0b44",borderRadius:4,padding:"2px 8px",fontWeight:700}}>{article.status.replaceAll("_"," ").toUpperCase()}</span>}
-            {article.tags?.map(t=><span key={t} style={{fontSize:11,color:"#6A5848",background:"#242424",borderRadius:3,padding:"2px 7px"}}>#{t}</span>)}
+            {article.tags?.map(t=><button key={t} onClick={()=>onSelectTag(t)}
+              title={`Show all articles tagged ${t}`}
+              style={{fontSize:11,color:"#B8A898",background:"#242424",border:"1px solid #34302C",borderRadius:3,padding:"2px 7px",cursor:"pointer"}}>#{t}</button>)}
           </div>
         </div>
         {canEdit&&(
@@ -2941,6 +2995,22 @@ function KBArticle({article,session,canPublish,onEdit,onDelete,onBack}) {
       <Card style={{marginTop:16}}>
         <div style={{lineHeight:1.8}}>{renderMd(article.body)}</div>
       </Card>
+      {relatedArticles?.length>0&&(
+        <Card style={{marginTop:16}}>
+          <SectionLabel>Related Knowledge</SectionLabel>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10}}>
+            {relatedArticles.map(related=>(
+              <button key={related.id} onClick={()=>onOpenRelated(related)}
+                style={{background:"#0D0D0D",border:"1px solid #242424",borderRadius:8,padding:"12px 14px",textAlign:"left",cursor:"pointer"}}>
+                <div style={{color:"#EDE9E3",fontSize:13,fontWeight:700,lineHeight:1.35}}>{related.title}</div>
+                <div style={{color:"#6A5848",fontSize:10,marginTop:6}}>
+                  {related.sharedTags.slice(0,3).map(tag=>`#${tag}`).join(" · ")}
+                </div>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -2951,7 +3021,7 @@ function KBEditor({article,session,canPublish,onSave,onCancel}) {
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
   function handleSave(status) {
-    const tags=tagInput.split(",").map(t=>t.trim()).filter(Boolean);
+    const tags=[...new Set(tagInput.split(",").map(t=>t.trim().toLowerCase()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     const updated={...form,tags,status,reviewerId:canPublish&&status!=="draft"?session.id:null,updated:new Date().toISOString()};
     onSave(updated);
   }
