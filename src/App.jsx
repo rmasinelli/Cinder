@@ -52,6 +52,7 @@ const btnPrimary = {
   padding:"10px 20px", fontSize:13, fontWeight:700, cursor:"pointer",
   width:"100%", fontFamily:"'Inter',sans-serif", letterSpacing:"0.02em",
 };
+const MIN_PASSWORD_LENGTH = 12;
 
 
 // ── Shared helpers (defined early so all components can use them) ──
@@ -556,36 +557,35 @@ function Login({ onSignIn }) {
     const allCodes = [classCode.trim(), ...extraCodes.map(c=>c.trim())].filter(Boolean);
     if (!allCodes.length || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
     if (pass !== confirm) { setErr("Passwords do not match."); setLoading(false); return; }
-    if (pass.length < 6)  { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+    if (pass.length < MIN_PASSWORD_LENGTH)  {
+      setErr(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      setLoading(false);
+      return;
+    }
 
-    // Validate all class codes
+    // Validate exact class codes without exposing the full class directory.
     const classResults = await Promise.all(allCodes.map(code=>
-      supabase.from("classes").select("id, name, code").ilike("code", code).single()
+      supabase.rpc("lookup_class_by_code", { p_code: code })
     ));
     const badCode = classResults.findIndex(r=>r.error||!r.data);
     if (badCode>=0) { setErr(`Class code "${allCodes[badCode]}" not found. Check with your instructor.`); setLoading(false); return; }
-    const classes = classResults.map(r=>r.data);
-    const primaryClass = classes[0];
-
-    // Check alias not already taken in primary class
-    const { data: existing } = await supabase.from("profiles").select("id")
-      .eq("alias", alias.trim()).eq("class_id", primaryClass.id).maybeSingle();
-    if (existing) { setErr("That alias is already taken in this class. Choose another."); setLoading(false); return; }
-
     const email = makeEmail(alias.trim(), allCodes[0]);
     const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
     if (signUpErr) { setErr(signUpErr.message); setLoading(false); return; }
 
-    // Create profile
-    const { error: profErr } = await supabase.from("profiles").insert({
-      id: data.user.id, alias: alias.trim(), role: "student", class_id: primaryClass.id,
+    // The database validates every code and creates all memberships atomically.
+    const { error: enrollErr } = await supabase.rpc("enroll_with_class_codes", {
+      p_class_codes: allCodes,
+      p_alias: alias.trim(),
     });
-    if (profErr) { setErr("Account created but profile failed. Contact your instructor."); setLoading(false); return; }
-
-    // Enroll in all classes via junction table
-    await supabase.from("profile_classes").insert(
-      classes.map(c=>({ profile_id: data.user.id, class_id: c.id }))
-    );
+    if (enrollErr) {
+      const aliasTaken = enrollErr.message?.includes("alias is already in use");
+      setErr(aliasTaken
+        ? "That alias is already taken in one of these classes. Choose another."
+        : "Account created but enrollment failed. Contact your instructor.");
+      setLoading(false);
+      return;
+    }
 
     saveCode(alias.trim(), allCodes[0]);
     const profile = await onSignIn(data.user.id);
@@ -603,27 +603,31 @@ function Login({ onSignIn }) {
   );
 
   // ── Reset password tab state ──
-  const [resetPin, setResetPin]         = useState("");
+  const [resetToken, setResetToken]     = useState("");
   const [newPass, setNewPass]           = useState("");
   const [confirmNew, setConfirmNew]     = useState("");
   const [ok, setOk]                     = useState("");
 
   async function handleReset() {
     setErr(""); setOk(""); setLoading(true);
-    if (!alias.trim() || !classCode.trim() || !resetPin.trim() || !newPass) {
+    if (!alias.trim() || !classCode.trim() || !resetToken.trim() || !newPass) {
       setErr("All fields required."); setLoading(false); return;
     }
     if (newPass !== confirmNew) { setErr("Passwords do not match."); setLoading(false); return; }
-    if (newPass.length < 6)    { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+    if (newPass.length < MIN_PASSWORD_LENGTH) {
+      setErr(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      setLoading(false);
+      return;
+    }
     const { data, error } = await supabase.rpc("reset_student_password", {
       p_alias: alias.trim(), p_class_code: classCode.trim(),
-      p_pin: resetPin.trim(), p_new_password: newPass,
+      p_token: resetToken.trim(), p_new_password: newPass,
     });
     setLoading(false);
     if (error) { setErr("Reset failed. Check your details and try again."); return; }
     if (data === "ok") {
       setOk("Password updated. You can now sign in.");
-      setResetPin(""); setNewPass(""); setConfirmNew("");
+      setResetToken(""); setNewPass(""); setConfirmNew("");
       saveCode(alias.trim(), classCode.trim());
       setTimeout(()=>{ setTab("signin"); setOk(""); }, 2000);
     } else if (data === "invalid_credentials") {
@@ -631,7 +635,7 @@ function Login({ onSignIn }) {
     } else if (data === "invalid_class") {
       setErr("Class code not found.");
     } else if (data === "password_too_short") {
-      setErr("Password must be at least 6 characters.");
+      setErr(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
     } else {
       setErr("Reset failed — contact your instructor.");
     }
@@ -675,7 +679,7 @@ function Login({ onSignIn }) {
               {loading ? "Please wait…" : "Sign In →"}
             </button>
             <p style={{fontSize:11,color:"#4A3828",textAlign:"center",marginTop:16}}>
-              Forgot your password? Use the Reset Password tab.<br/>You'll need the PIN from your instructor.
+              Forgot your password? Use the Reset Password tab.<br/>You'll need a reset code from your instructor.
             </p>
           </>}
 
@@ -723,7 +727,7 @@ function Login({ onSignIn }) {
           {/* ── RESET PASSWORD ── */}
           {tab==="reset" && <>
             <div style={{background:"#0D0D0D",border:"1px solid #2E2E2E",borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12,color:"#8A7868",lineHeight:1.7}}>
-              Ask your instructor for a reset PIN. Enter it below along with your alias and class code to set a new password.
+              Ask your instructor for a one-time reset code. It expires after 15 minutes.
             </div>
             <Field label="Alias">
               <input value={alias} onChange={e=>handleAliasChange(e.target.value)}
@@ -735,9 +739,9 @@ function Login({ onSignIn }) {
                   style={inputStyle} placeholder="e.g. FALL2026-NET" />
               </Field>
             )}
-            <Field label="Reset PIN (from instructor)">
-              <input value={resetPin} onChange={e=>{setResetPin(e.target.value);setErr("");}}
-                style={inputStyle} placeholder="4-digit PIN" maxLength={8} />
+            <Field label="One-time reset code">
+              <input value={resetToken} onChange={e=>{setResetToken(e.target.value);setErr("");}}
+                style={inputStyle} placeholder="Paste the code from your instructor" autoComplete="one-time-code" />
             </Field>
             <Field label="New Password">
               <input value={newPass} type="password" onChange={e=>{setNewPass(e.target.value);setErr("");}}
@@ -2450,7 +2454,7 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
   const [search,   setSearch]   = useState("");
   const [filterQ,  setFilterQ]  = useState(""); // quarter filter
   const [filterY,  setFilterY]  = useState(""); // year filter
-  const [pinMap,   setPinMap]   = useState({}); // profileId → generated PIN display
+  const [resetCodeMap, setResetCodeMap] = useState({}); // profileId → one-time code
   const [activeTab, setActiveTab] = useState("students"); // "students" | "clients"
 
   // Derive available quarters/years from loaded classes
@@ -2474,13 +2478,12 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
 
   const totalStudents = classStudents.length;
 
-  async function generatePin(student) {
-    const pin = String(Math.floor(1000 + Math.random() * 9000));
-    const { error } = await supabase.rpc("set_student_reset_pin", {
-      p_profile_id: student.id, p_pin: pin,
+  async function generateResetCode(student) {
+    const { data: resetCode, error } = await supabase.rpc("create_student_reset_token", {
+      p_profile_id: student.id,
     });
-    if (error) { showToast("Failed to set PIN — check Supabase logs."); return; }
-    setPinMap(m => ({...m, [student.id]: pin}));
+    if (error) { showToast("Failed to create reset code — check Supabase logs."); return; }
+    setResetCodeMap(m => ({...m, [student.id]: resetCode}));
   }
 
   const tabBtn = (id, label) => (
@@ -2550,30 +2553,30 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                     <thead>
                       <tr style={{borderBottom:"1px solid #242424"}}>
-                        {["Alias","Track","Reset PIN",""].map(h=>(
+                        {["Alias","Track","Reset code",""].map(h=>(
                           <th key={h} style={{textAlign:"left",padding:"6px 8px",color:"#6A5848",fontSize:11,textTransform:"uppercase",letterSpacing:"0.07em"}}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {students.map(s => {
-                        const shownPin = pinMap[s.id];
+                        const shownCode = resetCodeMap[s.id];
                         return (
                           <tr key={s.id+cls.id} style={{borderBottom:"1px solid #111"}}>
                             <td style={{padding:"9px 8px",color:"#EDE9E3",fontFamily:"monospace"}}>{s.alias}</td>
                             <td style={{padding:"9px 8px",color:"#8A7868",fontSize:12}}>{s.cohort||"—"}</td>
                             <td style={{padding:"9px 8px"}}>
-                              {shownPin
-                                ? <span style={{fontFamily:"monospace",fontSize:15,fontWeight:700,color:"#E8922E",background:"#E8922E15",border:"1px solid #E8922E44",borderRadius:4,padding:"2px 8px"}}>
-                                    {shownPin}
+                              {shownCode
+                                ? <span style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:"#E8922E",background:"#E8922E15",border:"1px solid #E8922E44",borderRadius:4,padding:"4px 8px",wordBreak:"break-all"}}>
+                                    {shownCode}
                                   </span>
                                 : <span style={{color:"#4A3828",fontSize:12}}>—</span>
                               }
                             </td>
                             <td style={{padding:"9px 8px",textAlign:"right"}}>
-                              <button onClick={()=>generatePin(s)}
+                              <button onClick={()=>generateResetCode(s)}
                                 style={{background:"none",border:"1px solid #2E2E2E",color:"#8A7868",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
-                                {shownPin ? "Regenerate PIN" : "Set PIN"}
+                                {shownCode ? "Regenerate code" : "Create code"}
                               </button>
                             </td>
                           </tr>
