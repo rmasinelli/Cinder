@@ -32,6 +32,13 @@ function slugify(value) {
   return `${base}-${Date.now().toString(36)}`;
 }
 
+function normalizeTags(tags = []) {
+  return [...new Set(tags
+    .map(tag => tag.trim().toLowerCase())
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
 function toDatabaseArticle(article, userId) {
   const now = new Date().toISOString();
   return {
@@ -44,7 +51,7 @@ function toDatabaseArticle(article, userId) {
     author_id: article.authorId || userId,
     reviewer_id: article.reviewerId || null,
     body: article.body,
-    tags: article.tags || [],
+    tags: normalizeTags(article.tags),
     review_notes: article.reviewNotes || null,
     source_type: article.sourceType || null,
     source_id: article.sourceId || null,
