@@ -52,6 +52,75 @@ const btnPrimary = {
   padding:"10px 20px", fontSize:13, fontWeight:700, cursor:"pointer",
   width:"100%", fontFamily:"'Inter',sans-serif", letterSpacing:"0.02em",
 };
+// Shared ghost/secondary button — for Back, Cancel, and other low-emphasis actions
+const btnGhost = {
+  display:"flex", alignItems:"center", gap:6,
+  background:"none", border:"1px solid #242424", color:"#8A7868",
+  borderRadius:6, padding:"6px 12px", fontSize:12, cursor:"pointer",
+  fontFamily:"'Inter',sans-serif",
+};
+
+// ── Global styles shared by Login (pre-auth) and Shell (post-auth) ──
+// Consolidated here so both surfaces get identical resets, focus rings,
+// hover feedback, and responsive rules instead of two drifting copies.
+function GlobalStyles(){
+  return (
+    <style>{`
+      *{box-sizing:border-box}
+      ::selection{background:#E8922E44;color:#F0EDE8;}
+      ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:#0D0D0D} ::-webkit-scrollbar-thumb{background:#242424;border-radius:3px}
+      input:focus,textarea:focus,select:focus{outline:2px solid #E8922E !important;outline-offset:2px;}
+      input,textarea,select,button{-webkit-tap-highlight-color:transparent;font-family:inherit;}
+      input[type="file"]::file-selector-button{background:#242424;border:1px solid #2E2E2E;color:#B8A898;border-radius:6px;padding:6px 12px;font-family:inherit;font-size:12px;cursor:pointer;margin-right:10px;transition:filter .15s ease;}
+      input[type="file"]::file-selector-button:hover{filter:brightness(1.2);}
+      select option{background:#1A1A1A;color:#EDE9E3;}
+
+      /* ── Interactive feedback ── */
+      button{transition:filter .15s ease, transform .08s ease, border-color .15s ease, background-color .15s ease;}
+      button:not(:disabled){cursor:pointer;}
+      button:not(:disabled):hover{filter:brightness(1.15);}
+      button:not(:disabled):active{transform:translateY(1px);}
+      button:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:2px solid #E8922E;outline-offset:2px;border-radius:4px;}
+
+      @keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes ember-pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+
+      /* ── Responsive layout classes ── */
+      .mob-topbar{display:none;}
+      .mob-overlay{display:none;position:fixed;inset:0;background:#000b;z-index:190;}
+      .shell-sidebar{width:224px;background:#0D0D0D;border-right:1px solid #242424;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;flex-shrink:0;}
+      .shell-content{flex:1;overflow-y:auto;padding:32px;}
+
+      .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
+      .course-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+      .detail-grid{display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start;}
+      .lab-grid{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;}
+      .scenario-editor-grid{display:grid;grid-template-columns:1fr 380px;gap:20px;align-items:start;}
+      .scenario-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+      .kb-layout-grid{display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start;}
+      .ir-grid{display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;}
+      .new-ticket-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+
+      @media(max-width:767px){
+        .mob-topbar{display:flex;position:fixed;top:0;left:0;right:0;height:54px;background:#0D0D0D;border-bottom:1px solid #242424;align-items:center;justify-content:space-between;padding:0 16px;z-index:200;}
+        .mob-overlay.open{display:block;}
+        .shell-sidebar{position:fixed;top:0;left:0;z-index:210;height:100vh;width:272px;transform:translateX(-100%);transition:transform .25s ease;box-shadow:4px 0 32px #000;}
+        .shell-sidebar.open{transform:translateX(0);}
+        .shell-content{padding:16px;padding-top:70px;}
+        .stats-grid{grid-template-columns:repeat(2,1fr)!important;}
+        .course-grid{grid-template-columns:1fr!important;}
+        .detail-grid{grid-template-columns:1fr!important;}
+        .lab-grid{grid-template-columns:1fr!important;}
+        .scenario-editor-grid{grid-template-columns:1fr!important;}
+        .scenario-form-grid{grid-template-columns:1fr!important;}
+        .kb-layout-grid{grid-template-columns:1fr!important;}
+        .ir-grid{grid-template-columns:1fr!important;}
+        .new-ticket-grid{grid-template-columns:1fr!important;}
+        .tkt-row-hide{display:none!important;}
+      }
+    `}</style>
+  );
+}
 
 
 // ── Shared helpers (defined early so all components can use them) ──
@@ -74,7 +143,7 @@ function Card({children,style={}}){return <div style={{background:"#1A1A1A",bord
 function Field({label,children}){return(<div style={{marginBottom:16}}><label style={{display:"block",fontSize:11,color:"#6A5848",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>{label}</label>{children}</div>);}
 function DetailRow({label,val}){return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><span style={{fontSize:12,color:"#6A5848"}}>{label}</span><span style={{fontSize:13,color:"#B8A898"}}>{val}</span></div>);}
 function EmptyState({msg}){return <div style={{background:"#1A1A1A",border:"1px solid #242424",borderRadius:12,padding:40,textAlign:"center",color:"#6A5848",fontSize:14}}>{msg}</div>;}
-function Toast({msg,type}){return(<div style={{position:"fixed",bottom:24,right:24,background:type==="success"?"#166534":"#7f1d1d",border:"1px solid "+(type==="success"?"#22c55e44":"#ef444444"),color:type==="success"?"#86efac":"#fca5a5",borderRadius:8,padding:"12px 20px",fontSize:13,zIndex:9999,fontFamily:"'Inter',sans-serif",color:"#F0EDE8"}}>{msg}</div>);}
+function Toast({msg,type}){return(<div style={{position:"fixed",bottom:24,right:24,background:type==="success"?"#166534":"#7f1d1d",border:"1px solid "+(type==="success"?"#22c55e44":"#ef444444"),color:"#F0EDE8",borderRadius:8,padding:"12px 20px",fontSize:13,zIndex:9999,fontFamily:"'Inter',sans-serif",boxShadow:"0 8px 24px #000a",animation:"toast-in .2s ease"}}>{msg}</div>);}
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -325,8 +394,12 @@ export default function App() {
   }
 
   if(!ready) return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0D0D0D",color:"#F0B060",fontFamily:"monospace",fontSize:18}}>
-      Loading Cinder by Ember…
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0D0D0D",gap:14}}>
+      <GlobalStyles />
+      <div style={{fontFamily:"'Raleway',sans-serif",fontSize:28,fontWeight:800,color:"#F0EDE8",letterSpacing:"-0.02em",animation:"ember-pulse 1.4s ease-in-out infinite"}}>
+        Cinder<span style={{color:"#E8922E"}}>.</span>
+      </div>
+      <div style={{fontSize:12,color:"#6A5848",letterSpacing:"0.1em",textTransform:"uppercase"}}>Loading</div>
     </div>
   );
   if(!session) return <Login onSignIn={loadProfile} />;
@@ -639,7 +712,7 @@ function Login({ onSignIn }) {
 
   return (
     <div style={{minHeight:"100vh",background:"#0D0D0D",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Raleway:wght@700;800&display=swap');`}</style>
+      <GlobalStyles />
       <div style={{width:420}}>
         <div style={{textAlign:"center",marginBottom:40}}>
           <div style={{fontSize:11,letterSpacing:"0.3em",color:"#6A5848",textTransform:"uppercase",marginBottom:8}}>Cinder by Ember</div>
@@ -821,47 +894,7 @@ function Shell({session,onLogout,view,setView,unread,children}) {
 
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#0D0D0D",fontFamily:"'Inter',sans-serif"}}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Raleway:wght@700;800&display=swap');
-        *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:#0D0D0D} ::-webkit-scrollbar-thumb{background:#242424;border-radius:3px}
-        input:focus,textarea:focus,select:focus{outline:2px solid #E8922E !important;outline-offset:2px;}
-        input,textarea,select,button{-webkit-tap-highlight-color:transparent;}
-
-        /* ── Responsive layout classes ── */
-        .mob-topbar{display:none;}
-        .mob-overlay{display:none;position:fixed;inset:0;background:#000b;z-index:190;}
-        .shell-sidebar{width:224px;background:#0D0D0D;border-right:1px solid #242424;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;flex-shrink:0;}
-        .shell-content{flex:1;overflow-y:auto;padding:32px;}
-
-        .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
-        .course-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
-        .detail-grid{display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start;}
-        .lab-grid{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;}
-        .scenario-editor-grid{display:grid;grid-template-columns:1fr 380px;gap:20px;align-items:start;}
-        .scenario-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
-        .kb-layout-grid{display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start;}
-        .ir-grid{display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;}
-        .new-ticket-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-
-        @media(max-width:767px){
-          .mob-topbar{display:flex;position:fixed;top:0;left:0;right:0;height:54px;background:#0D0D0D;border-bottom:1px solid #242424;align-items:center;justify-content:space-between;padding:0 16px;z-index:200;}
-          .mob-overlay.open{display:block;}
-          .shell-sidebar{position:fixed;top:0;left:0;z-index:210;height:100vh;width:272px;transform:translateX(-100%);transition:transform .25s ease;box-shadow:4px 0 32px #000;}
-          .shell-sidebar.open{transform:translateX(0);}
-          .shell-content{padding:16px;padding-top:70px;}
-          .stats-grid{grid-template-columns:repeat(2,1fr)!important;}
-          .course-grid{grid-template-columns:1fr!important;}
-          .detail-grid{grid-template-columns:1fr!important;}
-          .lab-grid{grid-template-columns:1fr!important;}
-          .scenario-editor-grid{grid-template-columns:1fr!important;}
-          .scenario-form-grid{grid-template-columns:1fr!important;}
-          .kb-layout-grid{grid-template-columns:1fr!important;}
-          .ir-grid{grid-template-columns:1fr!important;}
-          .new-ticket-grid{grid-template-columns:1fr!important;}
-          .tkt-row-hide{display:none!important;}
-        }
-      `}</style>
+      <GlobalStyles />
 
       {/* Mobile top bar */}
       <div className="mob-topbar">
@@ -1070,7 +1103,8 @@ function SubmitTicket({session,courses,onSubmit}) {
             placeholder="Describe the issue in detail. For labs, document what you observed and what you tried." />
         </Field>
         <button onClick={()=>{if(form.title.trim()&&form.description.trim()&&form.categories.length>0)onSubmit(form);}}
-          style={btnPrimary} disabled={!form.title.trim()||!form.description.trim()||form.categories.length===0}>
+          style={{...btnPrimary,opacity:(!form.title.trim()||!form.description.trim()||form.categories.length===0)?0.4:1}}
+          disabled={!form.title.trim()||!form.description.trim()||form.categories.length===0}>
           Submit Ticket →
         </button>
         {form.categories.length===0&&<div style={{fontSize:11,color:"#6A5848",marginTop:8,textAlign:"center"}}>Select at least one category</div>}
@@ -1139,8 +1173,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
 
           {/* Top breadcrumb bar */}
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:"1px solid #1E1E1E"}}>
-            <button onClick={()=>setSelectedAssigned(null)}
-              style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"1px solid #242424",color:"#8A7868",cursor:"pointer",fontSize:12,borderRadius:6,padding:"6px 12px"}}>
+            <button onClick={()=>setSelectedAssigned(null)} style={btnGhost}>
               ← Back
             </button>
             <span style={{color:"#3A3A3A",fontSize:12}}>/</span>
@@ -1489,7 +1522,7 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
 
       {/* Top breadcrumb bar */}
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:"1px solid #1E1E1E"}}>
-        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"1px solid #242424",color:"#8A7868",cursor:"pointer",fontSize:12,borderRadius:6,padding:"6px 12px"}}>
+        <button onClick={onBack} style={btnGhost}>
           ← Back
         </button>
         <span style={{color:"#3A3A3A",fontSize:12}}>/</span>
@@ -2017,7 +2050,7 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
 
     return (
       <div style={{maxWidth:1060}}>
-        <button onClick={cancel} style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,padding:"6px 14px",fontSize:12,cursor:"pointer",marginBottom:20}}>← Back to Library</button>
+        <button onClick={cancel} style={{...btnGhost,marginBottom:20}}>← Back to Library</button>
         <PageTitle title={editing==="new"?"New Custom Scenario":"Edit Scenario"}
           sub="Custom scenarios are saved to Supabase and available in Lab Manager." />
 
@@ -2327,9 +2360,7 @@ function MyLabs({session, assignedTickets, onStatusChange, onSaveNote}) {
     const course=courseById(ticket.course_id);
     return (
       <div style={{maxWidth:800}}>
-        <button onClick={()=>setSelected(null)}
-          style={{background:"none",border:"1px solid #242424",color:"#8A7868",borderRadius:6,
-            padding:"6px 14px",fontSize:12,cursor:"pointer",marginBottom:20}}>
+        <button onClick={()=>setSelected(null)} style={{...btnGhost,marginBottom:20}}>
           ← Back to My Labs
         </button>
         <PageTitle title={ticket.title} sub={ticket.lab_assignments?.week_label||`Week ${ticket.week}`} />
@@ -2947,6 +2978,15 @@ function KnowledgeBase({session,kb,onSave,onDelete}) {
 function KBArticle({article,session,canPublish,relatedArticles,onOpenRelated,onSelectTag,onEdit,onDelete,onBack}) {
   const course=courseById(article.courseId);
   // Very simple markdown renderer
+  // Inline formatting shared by paragraphs and list items — handles `code` and **bold**
+  function renderInline(text) {
+    const parts=text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+    return parts.map((p,j)=>{
+      if(p.startsWith("`")) return <code key={j} style={{background:"#0D0D0D",border:"1px solid #242424",borderRadius:3,padding:"1px 6px",fontSize:12,color:"#E8922E",fontFamily:"monospace"}}>{p.slice(1,-1)}</code>;
+      if(p.startsWith("**")) return <strong key={j} style={{color:"#EDE9E3",fontWeight:700}}>{p.slice(2,-2)}</strong>;
+      return p;
+    });
+  }
   function renderMd(text) {
     const lines=text.split("\n");
     return lines.map((line,i)=>{
@@ -2955,18 +2995,16 @@ function KBArticle({article,session,canPublish,relatedArticles,onOpenRelated,onS
       if(line.startsWith("# "))   return <h1 key={i} style={{color:"#F0EDE8",fontFamily:"'Raleway',sans-serif",fontSize:22,marginTop:24,marginBottom:10}}>{line.slice(2)}</h1>;
       if(line.startsWith("```"))  return null;
       if(line.startsWith("| "))   return <div key={i} style={{fontFamily:"monospace",fontSize:12,color:"#B8A898",borderBottom:"1px solid #24242433",padding:"4px 0"}}>{line}</div>;
-      if(line.startsWith("- "))   return <li key={i} style={{color:"#B8A898",fontSize:14,marginBottom:4,marginLeft:16}}>{line.slice(2)}</li>;
-      if(line.match(/^\d+\. /))   return <li key={i} style={{color:"#B8A898",fontSize:14,marginBottom:6,marginLeft:16}}>{line.replace(/^\d+\. /,"")}</li>;
+      if(line.startsWith("- "))   return <li key={i} style={{color:"#B8A898",fontSize:14,marginBottom:4,marginLeft:16}}>{renderInline(line.slice(2))}</li>;
+      if(line.match(/^\d+\. /))   return <li key={i} style={{color:"#B8A898",fontSize:14,marginBottom:6,marginLeft:16}}>{renderInline(line.replace(/^\d+\. /,""))}</li>;
       if(line.trim()==="")        return <div key={i} style={{height:8}}/>;
-      // inline code
-      const parts=line.split(/(`[^`]+`)/g);
-      return <p key={i} style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:"4px 0"}}>{parts.map((p,j)=>p.startsWith("`")?<code key={j} style={{background:"#0D0D0D",border:"1px solid #242424",borderRadius:3,padding:"1px 6px",fontSize:12,color:"#E8922E",fontFamily:"monospace"}}>{p.slice(1,-1)}</code>:p)}</p>;
+      return <p key={i} style={{color:"#B8A898",fontSize:14,lineHeight:1.7,margin:"4px 0"}}>{renderInline(line)}</p>;
     });
   }
   const canEdit=session.role==="tech"||session.role==="admin"||(article.authorId===session.id&&["draft","changes_requested"].includes(article.status));
   return (
     <div style={{maxWidth:800}}>
-      <button onClick={onBack} style={{background:"none",border:"none",color:"#6A5848",cursor:"pointer",fontSize:13,marginBottom:20,padding:0}}>← Back to Knowledge Base</button>
+      <button onClick={onBack} style={{...btnGhost,marginBottom:20}}>← Back to Knowledge Base</button>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16,marginBottom:8}}>
         <div style={{flex:1}}>
           {course&&<span style={{fontSize:11,color:course.color,fontWeight:700,background:course.color+"18",border:`1px solid ${course.color}33`,borderRadius:3,padding:"2px 7px",marginBottom:8,display:"inline-block"}}>{course.icon} {course.label}</span>}
@@ -3028,7 +3066,7 @@ function KBEditor({article,session,canPublish,onSave,onCancel}) {
 
   return (
     <div style={{maxWidth:800}}>
-      <button onClick={onCancel} style={{background:"none",border:"none",color:"#6A5848",cursor:"pointer",fontSize:13,marginBottom:20,padding:0}}>← Cancel</button>
+      <button onClick={onCancel} style={{...btnGhost,marginBottom:20}}>← Cancel</button>
       <PageTitle title={String(form.id).startsWith("kb-")?form.title||"New Article":"Edit Article"} sub={form.status.replaceAll("_"," ")} />
       <Card>
         <Field label="Title">
@@ -3221,7 +3259,7 @@ function IRDetail({incident,session,users,tickets,onSave,onDelete,onBack}) {
 
   return (
     <div style={{maxWidth:900}}>
-      <button onClick={onBack} style={{background:"none",border:"none",color:"#6A5848",cursor:"pointer",fontSize:13,marginBottom:20,padding:0}}>← Back to Incidents</button>
+      <button onClick={onBack} style={{...btnGhost,marginBottom:20}}>← Back to Incidents</button>
 
       {/* Header */}
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16,marginBottom:20}}>
@@ -3319,7 +3357,7 @@ function IRDetail({incident,session,users,tickets,onSave,onDelete,onBack}) {
                 <textarea value={noteText} onChange={e=>setNoteText(e.target.value)}
                   style={{...inputStyle,height:80,resize:"vertical"}}
                   placeholder="Document an observation, action taken, or finding…" />
-                <button onClick={addTimelineNote} style={{...btnPrimary,marginTop:8}} disabled={!noteText.trim()}>Add to Timeline</button>
+                <button onClick={addTimelineNote} style={{...btnPrimary,marginTop:8,opacity:noteText.trim()?1:0.4}} disabled={!noteText.trim()}>Add to Timeline</button>
               </div>
             )}
           </Card>
