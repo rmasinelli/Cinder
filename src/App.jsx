@@ -432,7 +432,8 @@ export default function App() {
                 `Priority: ${ticket.priority}\nCourse: ${courseById(ticket.courseId)?.label||"General"}`,ticket.id));
             await addNotifs(notifBatch);
             showToast("Ticket submitted!"); setView("my-tickets");
-          }} />
+          }}
+          onBack={()=>setView("my-tickets")} />
       )}
       {view==="my-tickets" && (
         <MyTickets session={session} tickets={tickets} users={users}
@@ -441,7 +442,8 @@ export default function App() {
           onConsumeInitial={()=>setDeepAssigned(null)}
           onSaveNote={saveLabNote}
           onStatusChange={updateAssignedTicketStatus}
-          onOpen={id=>{setSelected(id);setView("ticket");}} />
+          onOpen={id=>{setSelected(id);setView("ticket");}}
+          onNewTicket={()=>setView("submit")} />
       )}
       {view==="queue" && (session.role==="tech"||session.role==="admin") && (
         <Queue session={session} tickets={tickets} users={users}
@@ -467,18 +469,13 @@ export default function App() {
           onOpen={id=>{setSelected(id);setView("ticket");}} />
       )}
       {view==="labs" && session.role==="admin" && (
-        <LabManager
+        <LabsHub
           session={session} classStudents={classStudents}
           customScenarios={customScenarios}
           onActivate={pushLabAssignment}
-        />
-      )}
-      {view==="scenarios" && session.role==="admin" && (
-        <ScenarioLibrary
-          customScenarios={customScenarios}
-          onSave={saveCustomScenario}
-          onDelete={deleteCustomScenario}
-          onImport={importScenarios}
+          onSaveScenario={saveCustomScenario}
+          onDeleteScenario={deleteCustomScenario}
+          onImportScenarios={importScenarios}
         />
       )}
       {view==="admin" && session.role==="admin" && (
@@ -844,16 +841,14 @@ function Shell({session,onLogout,view,setView,unread,children}) {
 
   const navItems=[
     {id:"dashboard",  label:"Dashboard",    roles:["student","tech","admin"], icon:"⊞"},
-    {id:"submit",     label:"New Ticket",   roles:["student","tech","admin"], icon:"＋"},
     {id:"my-tickets", label:"My Tickets",   roles:["student","tech","admin"], icon:"≡"},
     {id:"queue",      label:"Ticket Queue", roles:["tech","admin"],           icon:"▤"},
     {id:"kb",         label:"Knowledge Base",roles:["student","tech","admin"],icon:"📖"},
-    {id:"ir",         label:"Incidents",    roles:["student","tech","admin"], icon:"🚨"},
-    {id:"labs",       label:"Lab Manager",  roles:["admin"],                  icon:"🔬"},
-    {id:"scenarios",  label:"Scenarios",    roles:["admin"],                  icon:"📋"},
+    {id:"ir",         label:"Incidents",    roles:["student","tech","admin"], icon:"🚨", cohorts:["cyber","all"]},
+    {id:"labs",       label:"Labs",         roles:["admin"],                  icon:"🔬"},
     {id:"inbox",      label:"Inbox",        roles:["student","tech","admin"], icon:"✉"},
     {id:"admin",      label:"Admin Panel",  roles:["admin"],                  icon:"⚙"},
-  ].filter(n=>n.roles.includes(session.role));
+  ].filter(n=>n.roles.includes(session.role) && (!n.cohorts||n.cohorts.includes(session.cohort)));
 
   const sidebarContent = (
     <>
@@ -1040,7 +1035,7 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,getMyLabTic
 // ═══════════════════════════════════════════════════════════════
 // SUBMIT TICKET
 // ═══════════════════════════════════════════════════════════════
-function SubmitTicket({session,courses,onSubmit}) {
+function SubmitTicket({session,courses,onSubmit,onBack}) {
   const availCourses = session.cohort==="all" ? courses
     : session.cohort==="cyber" ? courses.filter(c=>c.id==="cyber")
     : courses.filter(c=>c.cohort==="net-hw");
@@ -1060,6 +1055,7 @@ function SubmitTicket({session,courses,onSubmit}) {
 
   return (
     <div style={{maxWidth:660}}>
+      {onBack&&<button onClick={onBack} style={{...btnGhost,marginBottom:20}}>← Back to My Tickets</button>}
       <PageTitle title="Submit a Ticket" sub="Document an issue or lab finding." />
       <Card>
         <Field label="Course">
@@ -1116,7 +1112,7 @@ function SubmitTicket({session,courses,onSubmit}) {
 // ═══════════════════════════════════════════════════════════════
 // MY TICKETS
 // ═══════════════════════════════════════════════════════════════
-function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onStatusChange}) {
+function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onStatusChange,onNewTicket}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
@@ -1314,7 +1310,10 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
 
   return (
     <div>
-      <PageTitle title="My Tickets" sub={`${total} ticket${total!==1?"s":""}`} />
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
+        <PageTitle title="My Tickets" sub={`${total} ticket${total!==1?"s":""}`} />
+        <button onClick={onNewTicket} style={{...btnPrimary,width:"auto",padding:"9px 20px"}}>+ New Ticket</button>
+      </div>
 
       {/* Assigned tickets — same row style as TicketTable */}
       {hasAssigned && (
@@ -1736,6 +1735,33 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
 
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LABS — combines Lab Manager (push) + Scenario Library under one
+// nav item, tabbed like Admin Panel's Students/Clients split.
+// ═══════════════════════════════════════════════════════════════
+function LabsHub({session,classStudents,customScenarios,onActivate,onSaveScenario,onDeleteScenario,onImportScenarios}) {
+  const [tab,setTab]=useState("push"); // "push" | "library"
+  const tabBtn=(id,label)=>(
+    <button onClick={()=>setTab(id)}
+      style={{padding:"8px 18px",background:tab===id?"#E8922E":"transparent",
+        color:tab===id?"#0D0D0D":"#6A5848",border:"none",borderRadius:6,
+        fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",textTransform:"uppercase"}}>
+      {label}
+    </button>
+  );
+  return (
+    <div>
+      <div style={{display:"flex",gap:4,background:"#1A1A1A",border:"1px solid #242424",borderRadius:8,padding:4,marginBottom:24,width:"fit-content"}}>
+        {tabBtn("push","Push Labs")}
+        {tabBtn("library","Scenario Library")}
+      </div>
+      {tab==="push"
+        ? <LabManager session={session} classStudents={classStudents} customScenarios={customScenarios} onActivate={onActivate} />
+        : <ScenarioLibrary customScenarios={customScenarios} onSave={onSaveScenario} onDelete={onDeleteScenario} onImport={onImportScenarios} />}
     </div>
   );
 }
