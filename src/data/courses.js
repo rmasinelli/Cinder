@@ -11,7 +11,6 @@ export const COURSES = [
     term:   "Fall",
     color:  "#38bdf8",
     icon:   "🌐",
-    cohort: "net-hw",
     categories: [
       "Cable/Physical Layer",
       "Switch Configuration",
@@ -28,7 +27,6 @@ export const COURSES = [
     term:   "Fall",
     color:  "#a78bfa",
     icon:   "🖥",
-    cohort: "net-hw",
     categories: [
       "Component Failure",
       "POST/Boot Issue",
@@ -45,7 +43,6 @@ export const COURSES = [
     term:   "Spring",
     color:  "#fb923c",
     icon:   "🔒",
-    cohort: "cyber",
     categories: [
       "Suspicious Activity",
       "Access Control",

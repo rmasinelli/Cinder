@@ -191,17 +191,20 @@ export default function App() {
     if (membershipRes.error) console.warn("profile_classes load error:", membershipRes.error);
     if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
+      const enrolledClasses = (memberships||[]).length > 0
+        ? (memberships||[]).map(m=>m.classes).filter(Boolean)
+        : profile.classes ? [profile.classes] : [];
       setSession({
         id: profile.id,
         name: profile.alias,
         role: profile.role,
-        cohort: profile.cohort || "net-hw",
+        // Which courses this student actually has access to — derived from the
+        // real classes they're enrolled in, not a static cohort label.
+        courseIds: [...new Set(enrolledClasses.map(c=>c.course_id).filter(Boolean))],
         class_id: profile.class_id,
         className: profile.classes?.name || "",
         classCode: profile.classes?.code || "",
-        classes: (memberships||[]).length > 0
-          ? (memberships||[]).map(m=>m.classes).filter(Boolean)
-          : profile.classes ? [profile.classes] : [],
+        classes: enrolledClasses,
       });
       setView("dashboard");
       if (!localStorage.getItem(`cinder:onboarded:${userId}`)) {
@@ -839,16 +842,20 @@ function Shell({session,onLogout,view,setView,unread,children}) {
   // Close drawer when navigating
   function nav(id){ setView(id); setNavOpen(false); }
 
+  // Courses this student actually has access to, derived from real class enrollment.
+  // Admins aren't enrolled in classes the same way, so they see every course.
+  const enrolledCourseIds = session.role==="admin" ? COURSES.map(c=>c.id) : (session.courseIds||[]);
+
   const navItems=[
     {id:"dashboard",  label:"Dashboard",    roles:["student","tech","admin"], icon:"⊞"},
     {id:"my-tickets", label:"My Tickets",   roles:["student","tech","admin"], icon:"≡"},
     {id:"queue",      label:"Ticket Queue", roles:["tech","admin"],           icon:"▤"},
     {id:"kb",         label:"Knowledge Base",roles:["student","tech","admin"],icon:"📖"},
-    {id:"ir",         label:"Incidents",    roles:["student","tech","admin"], icon:"🚨", cohorts:["cyber","all"]},
+    {id:"ir",         label:"Incidents",    roles:["student","tech","admin"], icon:"🚨", courses:["cyber"]},
     {id:"labs",       label:"Labs",         roles:["admin"],                  icon:"🔬"},
     {id:"inbox",      label:"Inbox",        roles:["student","tech","admin"], icon:"✉"},
     {id:"admin",      label:"Admin Panel",  roles:["admin"],                  icon:"⚙"},
-  ].filter(n=>n.roles.includes(session.role) && (!n.cohorts||n.cohorts.includes(session.cohort)));
+  ].filter(n=>n.roles.includes(session.role) && (!n.courses||n.courses.some(c=>enrolledCourseIds.includes(c))));
 
   const sidebarContent = (
     <>
@@ -857,7 +864,7 @@ function Shell({session,onLogout,view,setView,unread,children}) {
         <div style={{fontSize:10,color:"#6A5848",letterSpacing:"0.18em",textTransform:"uppercase",marginTop:2}}>Cinder</div>
       </div>
       <div style={{padding:"0 12px 12px",display:"flex",gap:4,flexWrap:"wrap"}}>
-        {(session.cohort==="all" ? COURSES : COURSES.filter(c=>c.cohort===session.cohort||session.cohort==="cyber"&&c.id==="cyber")).map(c=>(
+        {COURSES.filter(c=>enrolledCourseIds.includes(c.id)).map(c=>(
           <span key={c.id} style={{fontSize:9,background:c.color+"18",color:c.color,border:`1px solid ${c.color}33`,borderRadius:3,padding:"2px 6px",fontWeight:700,letterSpacing:"0.06em"}}>
             {c.icon} {c.id.toUpperCase()}
           </span>
@@ -880,7 +887,7 @@ function Shell({session,onLogout,view,setView,unread,children}) {
         <div style={{fontSize:12,color:"#B8A898",fontWeight:500}}>{session.name}</div>
         <div style={{fontSize:10,marginTop:3,display:"flex",gap:6,flexWrap:"wrap"}}>
           <span style={{background:ROLE_COLOR[session.role]+"22",color:ROLE_COLOR[session.role],padding:"1px 6px",borderRadius:3,textTransform:"uppercase",letterSpacing:"0.08em",fontSize:9,fontWeight:700}}>{session.role}</span>
-          {session.cohort&&session.cohort!=="all"&&<span style={{color:"#4A3828",fontSize:9}}>{session.cohort==="net-hw"?"NET + HW":"CYBER"}</span>}
+          {session.role!=="admin"&&enrolledCourseIds.length>0&&<span style={{color:"#4A3828",fontSize:9}}>{enrolledCourseIds.map(id=>id.toUpperCase()).join(" + ")}</span>}
         </div>
         <button onClick={onLogout} style={{marginTop:12,fontSize:11,color:"#6A5848",background:"none",border:"none",cursor:"pointer",padding:0}}>← Sign out</button>
       </div>
@@ -1036,9 +1043,10 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,getMyLabTic
 // SUBMIT TICKET
 // ═══════════════════════════════════════════════════════════════
 function SubmitTicket({session,courses,onSubmit,onBack}) {
-  const availCourses = session.cohort==="all" ? courses
-    : session.cohort==="cyber" ? courses.filter(c=>c.id==="cyber")
-    : courses.filter(c=>c.cohort==="net-hw");
+  const filteredCourses = courses.filter(c=>(session.courseIds||[]).includes(c.id));
+  // If a student's class has no course_id set yet (misconfigured), fall back
+  // to showing every course rather than leaving the dropdown empty.
+  const availCourses = session.role==="admin"||filteredCourses.length===0 ? courses : filteredCourses;
 
   const [form,setForm]=useState({
     title:"", courseId: availCourses[0]?.id||"net",
@@ -2607,7 +2615,7 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                     <thead>
                       <tr style={{borderBottom:"1px solid #242424"}}>
-                        {["Alias","Track","Reset PIN",""].map(h=>(
+                        {["Alias","Reset PIN",""].map(h=>(
                           <th key={h} style={{textAlign:"left",padding:"6px 8px",color:"#6A5848",fontSize:11,textTransform:"uppercase",letterSpacing:"0.07em"}}>{h}</th>
                         ))}
                       </tr>
@@ -2618,7 +2626,6 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
                         return (
                           <tr key={s.id+cls.id} style={{borderBottom:"1px solid #111"}}>
                             <td style={{padding:"9px 8px",color:"#EDE9E3",fontFamily:"monospace"}}>{s.alias}</td>
-                            <td style={{padding:"9px 8px",color:"#8A7868",fontSize:12}}>{s.cohort||"—"}</td>
                             <td style={{padding:"9px 8px"}}>
                               {shownPin
                                 ? <span style={{fontFamily:"monospace",fontSize:15,fontWeight:700,color:"#E8922E",background:"#E8922E15",border:"1px solid #E8922E44",borderRadius:4,padding:"2px 8px"}}>
