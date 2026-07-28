@@ -175,77 +175,82 @@ Office Manager — Port Gardner Dental`,
 
   // ══════════════════════════════════════════
   // HARDWARE ESSENTIALS (hw)
+  // Rebuilt against actual shop inventory (July 2026): PC Parts kit
+  // (~20-23 units each of PSU/RAM/CPU+cooler/GPU/SSD/motherboard, no
+  // cases — builds happen on open test benches), 33x ThinkPad X230,
+  // a real fleet of broken Dell Latitude 5580s, 44x Raspberry Pi 4,
+  // Fluke multimeters + PSU testers, and bench monitors landing Aug.
   // ══════════════════════════════════════════
 
   {
     id: "sc-hw-01", courseId: "hw", week: 1,
-    title: "Computer is making a weird noise and I don't want to touch it",
+    title: "Big box of computer parts in the back — can someone tell us what we've got?",
     requesterId: "cmw-denise",
     mode: "broadcast", priority: "Low",
     categories: ["Component Failure"],
     description:
-`Hi, I'm so sorry to bother you with this. There's a computer here that's been making a sort of grinding or clicking noise for a while. I didn't want to mess with it in case I made it worse. It still works, mostly. I just thought someone should probably look at it before something bad happens. No rush though, I know you're all very busy.
+`Hi, sorry to bother you — there's a big box of computer parts sitting in the back that's been there for a while now. Honestly I don't know what's in it or if any of it even works. Could someone go through it and tell us what we actually have? No rush, I just don't like not knowing what's taking up the space.
 
 — Denise`,
     instructorNotes:
-`Physical task: Open lab desktop cases and create a full component inventory — CPU model, RAM type and capacity, storage type and size, GPU, motherboard form factor, PSU wattage. Sketch interior of case with labels in Field Journal. The "noise" context gives realistic intake framing.`,
+`Physical task: Unbox and inventory the PC Parts kit — PSU (450W), DDR4 RAM kit, AMD CPU + cooler, ASRock motherboard, Asus GT710 GPU, Kingston SSD. Record model, spec, and condition for each. Set up one component set on an anti-static mat as a "test bench" — no case, we build directly on the bench all quarter. Bonus station: the one broken/surplus Lenovo laptop in inventory can be fully torn down to the board with zero consequence since it's already marked for disposal — great for close-up component ID. Field Journal: full inventory table with quantities, a labeled photo/sketch of a test bench layout.`,
   },
 
   {
     id: "sc-hw-02", courseId: "hw", week: 2,
-    title: "Computer won't start — just makes beeping sounds",
-    requesterId: "cmw-marcus",
-    mode: "pairs", priority: "High",
-    categories: ["POST/Boot Issue"],
+    title: "Got a box of parts sitting there — put one together and get it running",
+    requesterId: "cmw-walt",
+    mode: "broadcast", priority: "High",
+    categories: ["Component Failure","POST/Boot Issue"],
     description:
-`The computer at the CNC station won't turn on. It just beeps a few times and then nothing. It was working fine yesterday. I don't know what the beeps mean.
+`I've got a box of parts sitting there and I am not buying pre-builts from Dell. Put one together — CPU, memory, drive, all of it — and get it running. Doesn't need to be in a case, I don't care what it looks like, I care that it turns on. If the whole class can each build their own, even better, faster.
 
-— Marcus`,
+— Walt`,
     instructorNotes:
-`Physical task: Identify the POST beep code pattern, diagnose the likely cause (RAM seating, GPU, CPU). Reseat or swap the faulty component and resolve. Field Journal: complete beep code reference chart and record which component caused the failure and how it was confirmed.`,
+`Physical task: Full build directly on an anti-static mat / test bench, no case. Mount CPU + cooler on the motherboard (thermal paste required — plenty of Arctic MX-4/Halnziye HY510 in stock, clean old paste with 99% isopropyl alcohol), seat RAM, connect PSU to motherboard/GPU/SSD, first POST on the open bench. Inventory supports one build per student. Field Journal: step-by-step build log, thermal paste method used, first-POST result.`,
   },
 
   {
     id: "sc-hw-03", courseId: "hw", week: 3,
-    title: "Need a new computer built — ours are falling apart",
-    requesterId: "cmw-walt",
-    mode: "individual", priority: "High",
-    categories: ["Component Failure","POST/Boot Issue"],
+    title: "One of the test bench computers won't boot right — it just beeps",
+    requesterId: "cmw-marcus",
+    mode: "pairs", priority: "Medium",
+    categories: ["POST/Boot Issue"],
     description:
-`Our machines are ancient. I'm not spending money on new ones from Dell when I've got parts sitting here. I need someone to put together a working computer from the components in that box. Should take what, an hour? Make sure it actually turns on before you leave.
+`One of the test bench computers won't boot right. It just beeps a few times and then sits there. It worked fine before. I didn't touch anything, I swear.
 
-— Walt`,
+— Marcus`,
     instructorNotes:
-`Physical task: Build a PC from component box — install CPU + cooler, seat RAM in correct slots, mount motherboard, connect storage and PSU, cable management, first POST. Document each step as notes. Field Journal: step-by-step build log including any issues encountered and how they were resolved.`,
+`Physical task: Before class, loosen a RAM stick or the GPU on a working bench build to induce a specific POST beep code. Students identify the beep pattern, then use a Power Supply Tester and a Fluke multimeter (confirm 9V batteries are in stock — on order for Sept) to isolate the fault before reseating. Field Journal: beep code reference chart, diagnostic steps with which tool confirmed what, root cause identified.`,
   },
 
   {
     id: "sc-hw-04", courseId: "hw", week: 4,
-    title: "Windows is installed but half the devices show question marks",
+    title: "I already tried to fix it myself before handing it over — sorry",
     requesterId: "cmw-cody",
-    mode: "individual", priority: "Medium",
-    categories: ["OS Installation"],
+    mode: "individual", priority: "High",
+    categories: ["OS Installation","Component Failure"],
     description:
-`OK so I installed Windows on the computer I built but there's a bunch of yellow question marks in the Device Manager. I looked some of them up online and tried downloading a couple drivers but I'm not sure if I got the right ones. Some of them are still showing up as unknown devices. Can someone come check?
+`So one of the laptops wouldn't boot right and I tried to fix it myself before bringing it in. I think I might have made it worse. It's one of the Dell ones. Sorry about that.
 
 — Cody`,
     instructorNotes:
-`Physical task: Install Windows 11 on the PC built in Lab 3 (or a lab machine). After installation, identify all unknown devices in Device Manager, find and install correct drivers from manufacturer sources. Field Journal: before/after Device Manager state, driver sources documented.`,
+`Physical task: Assign one of the fleet's genuinely broken / needs-OS-repair Dell Latitude 5580 units — real hardware, real fault, not staged. Diagnose whether the issue is OS-level or hardware first, then repair or reinstall Windows as needed and confirm the machine returns to working status. Field Journal: diagnostic path taken, the decision point between repair vs. reimage, final verification steps.`,
   },
 
   {
     id: "sc-hw-05", courseId: "hw", week: 5,
-    title: "Need someone to check BIOS settings before we roll these out",
+    title: "Need BIOS settings confirmed across the bench builds and the laptop fleet",
     requesterId: "emb-dean",
     mode: "broadcast", priority: "Medium",
     categories: ["BIOS/Firmware"],
     description:
-`Before these machines go to the client, I want confirmation that BIOS settings are correct across all of them. Specifically: boot order, SATA mode (AHCI not IDE), virtualization enabled, Secure Boot status, and date/time accurate. Document current state for each machine and flag any that need changes. Standard pre-deployment checklist.
+`Before any of these go out, I want BIOS/UEFI settings confirmed across the test bench builds and the laptop fleet. Specifically: boot order, SATA mode (AHCI not IDE), virtualization enabled, Secure Boot status, and date/time accurate. Document current state for each machine and flag anything that needs changing. Standard pre-deployment checklist.
 
 — Dean Okafor
 Ember Service Operations`,
     instructorNotes:
-`Physical task: Access BIOS/UEFI on each lab machine. Record all settings as found. Enable virtualization if not already on. Correct boot order if needed. Field Journal: record all BIOS settings found and document any changes made with rationale.`,
+`Physical task: Access BIOS/UEFI on a mix of bench builds and lab laptops. Record all settings as found, enable virtualization where missing, correct boot order. If a bench build fails to POST during the check, rule out the PSU first with the Power Supply Tester before assuming a BIOS problem. Field Journal: settings audit table per machine, any changes made with rationale.`,
   },
 
   {
@@ -259,11 +264,25 @@ Ember Service Operations`,
 
 — Denise`,
     instructorNotes:
-`Physical task: Safely disassemble lab laptop, upgrade RAM and swap to SSD, reassemble, boot to BIOS to verify detection, boot to OS. Field Journal: disassembly diagram with screw types and locations noted. Document upgrade rationale — why RAM + SSD addresses the reported symptoms.`,
+`Physical task: Use the ThinkPad X230 fleet — well-documented, safe full teardown — with the IFIXIT kits and antistatic mats. Upgrade RAM and swap to SSD, reassemble, boot to BIOS to verify both are detected, boot to OS. Field Journal: disassembly diagram with screw types and locations noted, before/after boot time if time allows.`,
   },
 
   {
     id: "sc-hw-07", courseId: "hw", week: 7,
+    title: "Rosa wants small quiet computers for the front desk — can someone set one up?",
+    requesterId: "emb-priya",
+    mode: "broadcast", priority: "Medium",
+    categories: ["OS Installation"],
+    description:
+`Hi! So this one's a little different. Rosa wants to put small quiet computers at a couple of client front desks instead of full towers — I think they're called Raspberry Pis? We have a whole box of them. Can someone get one set up and actually working so we can show her what it can do? I don't really know what "headless" means but I heard that word and got a little nervous. 😊
+
+— Priya`,
+    instructorNotes:
+`Physical task: Flash Raspberry Pi OS to a microSD card, boot the Pi, and configure headless access (SSH + a static or reserved IP) with no monitor attached. 44 units in stock — one per student is realistic. Stretch step: connect the included Crickit add-on board and confirm it's detected. Field Journal: imaging steps, headless connection method used, and one command run successfully over SSH to prove access.`,
+  },
+
+  {
+    id: "sc-hw-08", courseId: "hw", week: 8,
     title: "Keyboard stopped working and the monitor is doing something weird",
     requesterId: "cmw-marcus",
     mode: "individual", priority: "Medium",
@@ -273,36 +292,22 @@ Ember Service Operations`,
 
 — Marcus`,
     instructorNotes:
-`Physical task: Three peripherals — USB drive not detected, monitor flickering, keyboard intermittent. Diagnose each independently using Device Manager, display settings, and hardware swap testing. Open a separate note entry per peripheral in the ticket. Field Journal: troubleshooting flowchart for each peripheral.`,
-  },
-
-  {
-    id: "sc-hw-08", courseId: "hw", week: 8,
-    title: "New computer needs to get on the network — NIC might need drivers",
-    requesterId: "cmw-cody",
-    mode: "individual", priority: "High",
-    categories: ["Cross-Course","OS Installation","Peripheral"],
-    linkedCourse: "net",
-    description:
-`So I built this PC and installed Windows and it still won't connect to the network. The networking team said something about subnets and VLANs. I think the NIC might need drivers — I already tried reinstalling them but I used a random one I found online. Can someone check the NIC and then coordinate with the network side to get it connected properly?
-
-— Cody`,
-    instructorNotes:
-`Cross-course: Verify NIC is properly seated, install correct manufacturer NIC drivers, configure TCP/IP settings per the Networking team's subnet and VLAN plan, confirm ping to router gateway. Field Journal: record IP config, reference Networking VLAN notes from Lab 4.`,
+`Physical task: Three simultaneous peripheral faults on one test bench machine — bad keyboard, flickering/no-signal monitor (using the new bench monitors), and an undetected USB device. Diagnose each independently via Device Manager, cable/port swap, and hardware-swap testing. Field Journal: a separate troubleshooting entry per peripheral.`,
   },
 
   {
     id: "sc-hw-09", courseId: "hw", week: 9,
-    title: "Three machines are down and we're losing money every minute",
-    requesterId: "cmw-walt",
-    mode: "broadcast", priority: "Critical",
-    categories: ["Component Failure","POST/Boot Issue","Peripheral"],
+    title: "My test bench build is running — now it needs to actually be on the network",
+    requesterId: "cmw-cody",
+    mode: "individual", priority: "High",
+    categories: ["Cross-Course","OS Installation"],
+    linkedCourse: "net",
     description:
-`Three machines down on the shop floor. Can't run any of the CNC equipment. I don't know what's wrong with them. I need them back up today. Every hour they're down is money out of my pocket. I'll be honest — I'm not happy about this.
+`My test bench build is finally running. Now it needs to actually be on the network — the networking team said something about a specific subnet and VLAN for the bench builds. Can you get it connected and confirm it can actually talk to stuff, then let them know it's ready on their end?
 
-— Walt Jensen`,
+— Cody`,
     instructorNotes:
-`Instructor introduces hidden hardware faults into 3 lab machines before class. Students triage incoming tickets, assign to team members, track resolution, and document findings. Field Journal: incident report format for each machine — problem statement, impact, root cause, resolution steps.`,
+`Cross-course: Confirm the onboard NIC is working and current, configure TCP/IP per the Networking team's addressing/VLAN plan for the bench builds, confirm connectivity (ping gateway, resolve DNS). We don't currently stock a dedicated bad/legacy NIC to fake a driver fault, so this stays a real integration task rather than a staged one — coordinate timing with Networking's VLAN lab. Field Journal: IP configuration recorded, connectivity test results, reference to Networking's addressing plan.`,
   },
 
   {
@@ -313,11 +318,11 @@ Ember Service Operations`,
     categories: ["Cross-Course","OS Installation","Component Failure"],
     linkedCourse: "net",
     description:
-`Same client as the network build. Four workstations need to go in alongside the network infrastructure — built from components, Windows installed, drivers clean, joined to the network, and verified working. These machines need to be signed off before the client takes possession. I need a deployment checklist for each one.
+`Same client as the network build. Four workstations need to go in alongside the network infrastructure — built, Windows installed, drivers clean, joined to the network, and verified working. These need to be signed off before the client takes possession. I need a deployment checklist for each one.
 
 — Rosa`,
     instructorNotes:
-`Capstone: Teams deploy 4 workstations from bare hardware — build, OS install, driver setup, network join (coordinated with NET capstone), final verification. Field Journal: completed deployment checklist signed off for each machine. Lessons learned section required.`,
+`Capstone: Teams prepare 4 machines — a mix of fresh test-bench builds and repaired fleet laptops — OS installed, drivers clean, joined to the network (coordinated with the NET capstone), verified with the multimeter/PSU tester as needed, and signed off. Field Journal: completed deployment checklist per machine, lessons learned section required.`,
   },
 
 
