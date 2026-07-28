@@ -175,14 +175,22 @@ Office Manager — Port Gardner Dental`,
 
   // ══════════════════════════════════════════
   // HARDWARE ESSENTIALS (hw)
-  // Rebuilt against actual shop inventory (July 2026): PC Parts kit
-  // (~20-23 units each of PSU/RAM/CPU+cooler/GPU/SSD/motherboard, no
-  // cases — builds happen on open test benches), 33x ThinkPad X230,
-  // a real fleet of broken Dell Latitude 5580s, 44x Raspberry Pi 4,
-  // Fluke multimeters + PSU testers, and bench monitors landing Aug.
+  // Aligned to "Complete A+ Guide to IT Hardware and Software" (10th ed,
+  // Schmidt/Lee) — Mon lecture covers that week's chapter, Wed lab is
+  // pure hands-on execution of it. In scope: Ch1-9 + Ch11 (per the book's
+  // own "Chapters 1-9 focus on hardware" framing, plus Ch11's design/
+  // troubleshooting review). Ch10 (Mobile Devices) is intentionally
+  // skipped — no mobile labs this course. Week 9 (Ch9, Printers) is
+  // tabled pending equipment. Built against actual shop inventory: PC
+  // Parts kit (~20-23 units each of PSU/RAM/CPU+cooler/GPU/SSD/mobo, no
+  // cases — open test benches instead), Fluke multimeters + PSU testers,
+  // bench monitors landing Aug, and 44x Raspberry Pi 4 (bonus, below).
   // ══════════════════════════════════════════
 
   {
+    // Ch1: Introduction to the World of IT — part identification, technician
+    // habits, orientation. Mirrors the book's Ex 1.1/1.2 (Identifying Tower
+    // Computer Parts / Identifying Computer Parts).
     id: "sc-hw-01", courseId: "hw", week: 1,
     title: "Big box of computer parts in the back — can someone tell us what we've got?",
     requesterId: "cmw-denise",
@@ -193,11 +201,65 @@ Office Manager — Port Gardner Dental`,
 
 — Denise`,
     instructorNotes:
-`Physical task: Unbox and inventory the PC Parts kit — PSU (450W), DDR4 RAM kit, AMD CPU + cooler, ASRock motherboard, Asus GT710 GPU, Kingston SSD. Record model, spec, and condition for each. Set up one component set on an anti-static mat as a "test bench" — no case, we build directly on the bench all quarter. Bonus station: the one broken/surplus Lenovo laptop in inventory can be fully torn down to the board with zero consequence since it's already marked for disposal — great for close-up component ID. Field Journal: full inventory table with quantities, a labeled photo/sketch of a test bench layout.`,
+`Physical task: Unbox the PC Parts kit and identify each major component category at a glance — PSU, motherboard, RAM, CPU + cooler, GPU, storage. This is recognition, not deep analysis (that's Week 3). Cover lab orientation and ESD basics, and introduce the Field Journal as the ongoing documentation habit for the quarter. Field Journal: inventory table by category with quantities, one labeled photo/sketch per component type.`,
   },
 
   {
+    // Ch2: Connectivity — port/cable ID. Mirrors Ex 2.1-2.5 (ports, display
+    // ports, USB ports, cables).
     id: "sc-hw-02", courseId: "hw", week: 2,
+    title: "I already know it's the cable — just need someone to actually map it out",
+    requesterId: "cmw-sam",
+    mode: "broadcast", priority: "Low",
+    categories: ["Peripheral"],
+    description:
+`I've already looked at it myself — it's got to be a cable or a port issue somewhere on this batch of bench parts, I just don't know which ones go where. Somebody who actually knows this stuff should map it all out properly before we waste time guessing on a real job.
+
+— Sam`,
+    instructorNotes:
+`Physical task: Identify and label every port and connector type present on the motherboards, PSUs, and drives in the parts kit — SATA data/power, 24-pin ATX, CPU 4/8-pin, PCIe power, USB headers, front-panel headers, video outputs. Match each connector to its cable and its correct use — this is also a good moment to (gently) confirm or debunk Sam's confident guess. Field Journal: connector reference sheet with photos/sketches and what each one powers or carries.`,
+  },
+
+  {
+    // Ch3: On the Motherboard — component ID/analysis. Mirrors Ex 3.1/3.2
+    // (Identifying ATX Motherboard Parts / Motherboard Analysis).
+    id: "sc-hw-03", courseId: "hw", week: 3,
+    title: "Something's wrong with one of the boards, I think — can you check all of them?",
+    requesterId: "cmw-marcus",
+    mode: "pairs", priority: "Medium",
+    categories: ["Component Failure"],
+    description:
+`One of the boards in that stack might be bad, I think. Or maybe it's fine and it's something else. Can you go through them and just tell me what's actually on each one and if anything looks off?
+
+— Marcus`,
+    instructorNotes:
+`Physical task: Full motherboard analysis using the ASRock boards from inventory — identify CPU socket type, RAM slot count/channels, expansion slot types (PCIe x16/x1), chipset, form factor, rear I/O. Visually inspect every board for damage (bent pins, bulging capacitors, burn marks) before any of them go into Week 5's build. Field Journal: labeled motherboard diagram calling out every major component.`,
+  },
+
+  {
+    // Ch4: Introduction to Configuration — BIOS/UEFI, system resources.
+    // Mirrors Ex 4.1/4.2 (System Expansion / BIOS/UEFI Options). Uses
+    // whatever bench-capable systems already exist, since this quarter's
+    // builds don't happen until Week 5.
+    id: "sc-hw-04", courseId: "hw", week: 4,
+    title: "Need BIOS settings confirmed and documented before we go further",
+    requesterId: "emb-dean",
+    mode: "broadcast", priority: "Medium",
+    categories: ["BIOS/Firmware"],
+    description:
+`Before we put any more time into these, I want BIOS/UEFI settings confirmed and documented on the bench-capable systems we've already got — boot order, SATA mode (AHCI), virtualization enabled, Secure Boot status, and system clock. Flag anything that needs changing. Standard pre-deployment checklist.
+
+— Dean Okafor
+Ember Service Operations`,
+    instructorNotes:
+`Physical task: Access BIOS/UEFI on available bench-capable systems (this quarter's own builds don't exist until next week — use existing stock). Record all settings found, correct as needed, note anything that would block a clean OS install later. Field Journal: settings audit table per machine, changes made with rationale.`,
+  },
+
+  {
+    // Ch5: Disassembly and Power — tools, ESD, EMI, power concepts. THE
+    // build chapter. Mirrors Ex 5.1-5.3 (PSU connectors, replacement
+    // parts, describing computer parts).
+    id: "sc-hw-05", courseId: "hw", week: 5,
     title: "Got a box of parts sitting there — put one together and get it running",
     requesterId: "cmw-walt",
     mode: "broadcast", priority: "High",
@@ -207,81 +269,43 @@ Office Manager — Port Gardner Dental`,
 
 — Walt`,
     instructorNotes:
-`Physical task: Full build directly on an anti-static mat / test bench, no case. Mount CPU + cooler on the motherboard (thermal paste required — plenty of Arctic MX-4/Halnziye HY510 in stock, clean old paste with 99% isopropyl alcohol), seat RAM, connect PSU to motherboard/GPU/SSD, first POST on the open bench. Inventory supports one build per student. Field Journal: step-by-step build log, thermal paste method used, first-POST result.`,
+`Physical task: Full build directly on an anti-static mat / test bench, no case. Mount CPU + cooler on the motherboard (thermal paste required, clean old paste with 99% isopropyl alcohol), seat RAM, connect PSU to motherboard/GPU/SSD, first POST on the open bench. Inventory supports one build per student. Field Journal: step-by-step build log, thermal paste method used, first-POST result.`,
   },
 
   {
-    id: "sc-hw-03", courseId: "hw", week: 3,
-    title: "One of the test bench computers won't boot right — it just beeps",
-    requesterId: "cmw-marcus",
+    // Ch6: Memory — installation, prep, troubleshooting.
+    id: "sc-hw-06", courseId: "hw", week: 6,
+    title: "I reseated something trying to fix it and now it won't boot at all",
+    requesterId: "cmw-cody",
     mode: "pairs", priority: "Medium",
     categories: ["POST/Boot Issue"],
     description:
-`One of the test bench computers won't boot right. It just beeps a few times and then sits there. It worked fine before. I didn't touch anything, I swear.
-
-— Marcus`,
-    instructorNotes:
-`Physical task: Before class, loosen a RAM stick or the GPU on a working bench build to induce a specific POST beep code. Students identify the beep pattern, then use a Power Supply Tester and a Fluke multimeter (confirm 9V batteries are in stock — on order for Sept) to isolate the fault before reseating. Field Journal: beep code reference chart, diagnostic steps with which tool confirmed what, root cause identified.`,
-  },
-
-  {
-    id: "sc-hw-04", courseId: "hw", week: 4,
-    title: "I already tried to fix it myself before handing it over — sorry",
-    requesterId: "cmw-cody",
-    mode: "individual", priority: "High",
-    categories: ["OS Installation","Component Failure"],
-    description:
-`So one of the laptops wouldn't boot right and I tried to fix it myself before bringing it in. I think I might have made it worse. It's one of the Dell ones. Sorry about that.
+`So one of the test bench builds was acting up and I tried reseating some stuff myself to fix it. Now it just beeps a few times and won't boot at all. I think I might have made it worse. Sorry.
 
 — Cody`,
     instructorNotes:
-`Physical task: Assign one of the fleet's genuinely broken / needs-OS-repair Dell Latitude 5580 units — real hardware, real fault, not staged. Diagnose whether the issue is OS-level or hardware first, then repair or reinstall Windows as needed and confirm the machine returns to working status. Field Journal: diagnostic path taken, the decision point between repair vs. reimage, final verification steps.`,
+`Physical task: Before class, loosen a RAM stick or swap in a mismatched module on a working bench build. Students diagnose via POST beep code, then confirm with the Power Supply Tester and a Fluke multimeter (9V batteries arriving before term start) before correcting seating/channel configuration. Field Journal: beep code reference, memory configuration diagram (slots/channels used), root cause and fix.`,
   },
 
   {
-    id: "sc-hw-05", courseId: "hw", week: 5,
-    title: "Need BIOS settings confirmed across the bench builds and the laptop fleet",
-    requesterId: "emb-dean",
-    mode: "broadcast", priority: "Medium",
-    categories: ["BIOS/Firmware"],
-    description:
-`Before any of these go out, I want BIOS/UEFI settings confirmed across the test bench builds and the laptop fleet. Specifically: boot order, SATA mode (AHCI not IDE), virtualization enabled, Secure Boot status, and date/time accurate. Document current state for each machine and flag anything that needs changing. Standard pre-deployment checklist.
-
-— Dean Okafor
-Ember Service Operations`,
-    instructorNotes:
-`Physical task: Access BIOS/UEFI on a mix of bench builds and lab laptops. Record all settings as found, enable virtualization where missing, correct boot order. If a bench build fails to POST during the check, rule out the PSU first with the Power Supply Tester before assuming a BIOS problem. Field Journal: settings audit table per machine, any changes made with rationale.`,
-  },
-
-  {
-    id: "sc-hw-06", courseId: "hw", week: 6,
-    title: "Laptop is just really slow and I'm running out of space",
+    // Ch7: Storage Devices — SATA/SAS/SSD, RAID. The book itself includes
+    // a paper-based SATA config exercise, so RAID stays conceptual here
+    // since we don't stock RAID hardware.
+    id: "sc-hw-07", courseId: "hw", week: 7,
+    title: "It's just running a little slow, I think the drive might be getting full",
     requesterId: "cmw-denise",
-    mode: "pairs", priority: "High",
-    categories: ["Laptop Repair","Component Failure"],
+    mode: "individual", priority: "Medium",
+    categories: ["Component Failure"],
     description:
-`Hi again, sorry to be a bother. My laptop has been really slow lately and I keep getting a message that says the disk is almost full. I cleared out some files I didn't think I needed but it didn't really help. Also it sometimes freezes when I have QuickBooks and email open at the same time. I know it's probably old. I just wondered if there was anything you could do.
+`Sorry to bring this up again — one of the bench machines has been running kind of slow and I keep seeing a low disk space warning. I didn't want to assume it was anything serious. Is there something small that could be done, or is it more than that?
 
 — Denise`,
     instructorNotes:
-`Physical task: Use the ThinkPad X230 fleet — well-documented, safe full teardown — with the IFIXIT kits and antistatic mats. Upgrade RAM and swap to SSD, reassemble, boot to BIOS to verify both are detected, boot to OS. Field Journal: disassembly diagram with screw types and locations noted, before/after boot time if time allows.`,
+`Physical task: Install/swap an SSD on a bench build, confirm correct SATA data + power connection, verify detection in BIOS, benchmark or compare against the prior configuration. Discuss RAID levels and use cases conceptually (paper exercise) since we don't stock RAID hardware. Field Journal: before/after storage configuration, RAID discussion notes.`,
   },
 
   {
-    id: "sc-hw-07", courseId: "hw", week: 7,
-    title: "Rosa wants small quiet computers for the front desk — can someone set one up?",
-    requesterId: "emb-priya",
-    mode: "broadcast", priority: "Medium",
-    categories: ["OS Installation"],
-    description:
-`Hi! So this one's a little different. Rosa wants to put small quiet computers at a couple of client front desks instead of full towers — I think they're called Raspberry Pis? We have a whole box of them. Can someone get one set up and actually working so we can show her what it can do? I don't really know what "headless" means but I heard that word and got a little nervous. 😊
-
-— Priya`,
-    instructorNotes:
-`Physical task: Flash Raspberry Pi OS to a microSD card, boot the Pi, and configure headless access (SSH + a static or reserved IP) with no monitor attached. 44 units in stock — one per student is realistic. Stretch step: connect the included Crickit add-on board and confirm it's detected. Field Journal: imaging steps, headless connection method used, and one command run successfully over SSH to prove access.`,
-  },
-
-  {
+    // Ch8: Video and Multimedia Devices — displays, sound, peripherals.
     id: "sc-hw-08", courseId: "hw", week: 8,
     title: "Keyboard stopped working and the monitor is doing something weird",
     requesterId: "cmw-marcus",
@@ -295,34 +319,40 @@ Ember Service Operations`,
 `Physical task: Three simultaneous peripheral faults on one test bench machine — bad keyboard, flickering/no-signal monitor (using the new bench monitors), and an undetected USB device. Diagnose each independently via Device Manager, cable/port swap, and hardware-swap testing. Field Journal: a separate troubleshooting entry per peripheral.`,
   },
 
-  {
-    id: "sc-hw-09", courseId: "hw", week: 9,
-    title: "My test bench build is running — now it needs to actually be on the network",
-    requesterId: "cmw-cody",
-    mode: "individual", priority: "High",
-    categories: ["Cross-Course","OS Installation"],
-    linkedCourse: "net",
-    description:
-`My test bench build is finally running. Now it needs to actually be on the network — the networking team said something about a specific subnet and VLAN for the bench builds. Can you get it connected and confirm it can actually talk to stuff, then let them know it's ready on their end?
-
-— Cody`,
-    instructorNotes:
-`Cross-course: Confirm the onboard NIC is working and current, configure TCP/IP per the Networking team's addressing/VLAN plan for the bench builds, confirm connectivity (ping gateway, resolve DNS). We don't currently stock a dedicated bad/legacy NIC to fake a driver fault, so this stays a real integration task rather than a staged one — coordinate timing with Networking's VLAN lab. Field Journal: IP configuration recorded, connectivity test results, reference to Networking's addressing plan.`,
-  },
+  // Week 9 (Ch9: Printers/Multifunction Devices) intentionally left blank —
+  // tabled pending printer equipment. Add sc-hw-09 here once confirmed.
 
   {
+    // Ch11: Computer Design and Troubleshooting Review — specialized
+    // systems, subsystem design, troubleshooting methodology. Capstone.
     id: "sc-hw-10", courseId: "hw", week: 10,
-    title: "Full workstation deployment for new office — four machines, ready by Friday",
+    title: "Need computers specced and built for four different roles — not all the same job",
     requesterId: "emb-rosa",
     mode: "teams", priority: "Critical",
-    categories: ["Cross-Course","OS Installation","Component Failure"],
-    linkedCourse: "net",
+    categories: ["Component Failure","POST/Boot Issue","BIOS/Firmware"],
     description:
-`Same client as the network build. Four workstations need to go in alongside the network infrastructure — built, Windows installed, drivers clean, joined to the network, and verified working. These need to be signed off before the client takes possession. I need a deployment checklist for each one.
+`We've got four different roles that all need machines, and they are not the same job. Front desk just needs something reliable and quiet. The design contractor needs real horsepower. The warehouse station just needs to survive. I need each one spec'd, built, and signed off appropriately for what it's actually going to do — and if anything won't boot or acts up, I want that walked through properly, not just guessed at.
 
 — Rosa`,
     instructorNotes:
-`Capstone: Teams prepare 4 machines — a mix of fresh test-bench builds and repaired fleet laptops — OS installed, drivers clean, joined to the network (coordinated with the NET capstone), verified with the multimeter/PSU tester as needed, and signed off. Field Journal: completed deployment checklist per machine, lessons learned section required.`,
+`Capstone: Teams design and build 4 systems for different specialized use cases from the parts kit — e.g., basic/thin-client, performance/workstation, media-capable, budget/durable — matching component choices to role, per Ch11's specialized-systems content. Apply a real troubleshooting methodology (flowchart/logic, not guessing) to any issue encountered along the way. Field Journal: design rationale per build (why these specs for this role), full troubleshooting log for any issue hit, final verification checklist.`,
+  },
+
+  {
+    // Bonus / enrichment — not tied to a chapter or a required Wednesday.
+    // Uses the 44x Raspberry Pi 4 fleet, otherwise untouched by this course.
+    // Assign whenever there's slack (open lab, early finishers, extra credit).
+    id: "sc-hw-11", courseId: "hw", week: 11,
+    title: "[Bonus] Rosa wants small quiet computers for the front desk — can someone set one up?",
+    requesterId: "emb-priya",
+    mode: "broadcast", priority: "Low",
+    categories: ["OS Installation"],
+    description:
+`Hi! So this one's a little different. Rosa wants to put small quiet computers at a couple of client front desks instead of full towers — I think they're called Raspberry Pis? We have a whole box of them. Can someone get one set up and actually working so we can show her what it can do? I don't really know what "headless" means but I heard that word and got a little nervous. 😊
+
+— Priya`,
+    instructorNotes:
+`Bonus/enrichment — not part of the required 10-week sequence, doesn't map to a textbook chapter. Assign as extra credit, an open-lab activity, or filler for early finishers. Physical task: flash Raspberry Pi OS to a microSD card, boot the Pi, configure headless access (SSH + a static or reserved IP) with no monitor attached. 44 units in stock — one per student is realistic. Stretch step: connect the included Crickit add-on board and confirm it's detected. Field Journal: imaging steps, headless connection method used, one command run successfully over SSH to prove access.`,
   },
 
 
