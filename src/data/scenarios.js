@@ -26,54 +26,157 @@ export const SCENARIOS = [
 
   // ══════════════════════════════════════════
   // NETWORKING FUNDAMENTALS (net)
+  // Aligned to "Networking Essentials: A CompTIA Network+ (N10-008)"
+  // 6th ed. (Beasley/Nilkaew) — same Mon lecture / Wed lab structure as
+  // Hardware. Each week adapts one of the department's own real Cisco
+  // lab documents (Labs 1-14, some dated 2011-2017) to Cinder's ticket
+  // format, using actual shop inventory: 7x Cisco 1941 + 2x Cisco 2800 +
+  // 6x Cisco 2811 routers, 7x Catalyst 2960 + 8x Catalyst 3560 switches,
+  // 5x Netgear FS105 unmanaged switches, TP-Link/Linksys wireless gear,
+  // and a strong cable-termination/testing kit (crimpers, punchdown
+  // tools, Fluke LinkRunner/IntelliTone/EtherScope/CableIQ).
+  // Dynamic routing protocols (RIP, OSPF, EIGRP) are intentionally out —
+  // static routing only, per instructor call to keep Ch9 to one week.
+  // Ch3 (Fiber), Ch5 (Interconnecting LANs), Ch10 (Managing Infra),
+  // Ch12 (Cloud), Ch13 (Codes/Standards) have no lab — lecture only,
+  // same "tabled" treatment as Printers in Hardware.
   // ══════════════════════════════════════════
 
   {
+    // Ch1: Intro to Computer Networks — adapts Lab 1 (Office LAN / Ping
+    // Exercise). Host PCs are the general-use laptop fleet, since this
+    // quarter's Hardware-built PCs don't exist until Hardware Week 5.
     id: "sc-net-01", courseId: "net", week: 1,
-    title: "Wires everywhere in the server closet — can someone sort this out?",
+    title: "Wires everywhere in the back closet — can someone sort this out and get it working?",
     requesterId: "cmw-marcus",
+    mode: "broadcast", priority: "Low",
+    categories: ["Cable/Physical Layer","Diagnostics"],
+    description:
+`There's a bunch of cables in the back closet. Some of them go to the computers, some of them I don't know where they go. Gary set most of this up before he left. Can someone actually wire it up properly and make sure the computers can talk to each other? Whatever "talk to each other" means.
+
+— Marcus`,
+    instructorNotes:
+`Physical task: Build a small office LAN — at least 3 lab laptops connected to a Netgear FS105 unmanaged switch. Assign static IPs in the same subnet, verify link lights, use ipconfig /all to record each host's MAC address, then verify full connectivity with ping between every pair of hosts. Field Journal: a hand-drawn network topology diagram showing hosts, MAC addresses, and IP assignments (mirrors the original lab's Visio/topology requirement), plus ping results.`,
+  },
+
+  {
+    // Ch2: Physical Layer Cabling: Twisted-Pair — adapts Lab 2 (UTP).
+    id: "sc-net-02", courseId: "net", week: 2,
+    title: "Need a few cables made for a new setup — not sure what kind we actually need",
+    requesterId: "emb-priya",
     mode: "broadcast", priority: "Low",
     categories: ["Cable/Physical Layer"],
     description:
-`There's a bunch of cables in the back closet. Some of them go to the computers, some of them I don't know where they go. Gary set most of this up before he left. We just need someone to come look at it and tell us what's what.
+`Hi! We need a couple of network cables made for a new setup — just regular ones, but I think someone mentioned we might also need a "crossover" one? I honestly don't know the difference. Can whoever makes them also double check they actually work before handing them over? Thank you! 😊
 
-— Marcus`,
+— Priya`,
     instructorNotes:
-`Physical task: Walk the lab environment and identify every cable type present (Cat5e, Cat6, fiber, console/rollover). Tag or document each cable's purpose and destination. Record standards (TIA-568B), max lengths, and speeds in the Field Journal. Submit ticket with findings.`,
+`Physical task: Terminate one T568A straight-through patch cable (~3 ft) and one crossover cable using the UTP termination kit (crimpers, Cat6/Cat6a pass-through connectors in stock), then verify both with a cable tester (Master Cable Tester / handheld network cable tester). Field Journal: photo of both finished cables with tester results, plus a short memo explaining whether a cable wired 1-3, 2-6, 3-1, 4-7, 5-8, 6-2, 7-4, 8-5 would actually work and why — not a yes/no answer, justify it (mirrors the original lab's "memo to the boss" assignment).`,
   },
 
   {
-    id: "sc-net-02", courseId: "net", week: 2,
-    title: "Two computers can't see each other on the network",
-    requesterId: "cmw-marcus",
-    mode: "broadcast", priority: "Medium",
-    categories: ["Switch Configuration","Diagnostics"],
-    description:
-`The two computers at the estimating station. They used to share files and now they don't. Something about a network. I don't know what changed. They're both plugged into that switch on the wall.
-
-— Marcus`,
-    instructorNotes:
-`Physical task: Cable two lab workstations to an unmanaged switch. Assign static IPs in the same subnet. Verify connectivity with ping. Draw physical topology in Field Journal. Record IP assignments and test results.`,
-  },
-
-  {
+    // Ch4: Wireless Networking — adapts Lab 3 (site survey). Teams mode
+    // matches the original lab's "each group" instruction.
     id: "sc-net-03", courseId: "net", week: 3,
-    title: "New switch came in — needs to be set up before Friday",
+    title: "Need a proper wireless site survey before we recommend anything to a client",
+    requesterId: "emb-dean",
+    mode: "teams", priority: "Medium",
+    categories: ["Wireless"],
+    description:
+`We're evaluating wireless coverage for a space before recommending an access point layout to a client. I need an actual site survey — signal readings across the floor plan, a recommended AP placement, and a rough equipment list with cost. Standard documentation on this one, please.
+
+— Dean Okafor
+Ember Service Operations`,
+    instructorNotes:
+`Physical task: Conduct a real signal-strength site survey of the assigned lab space using a laptop's wireless client to log signal quality at multiple points on a hand-drawn floor plan. Propose AP placement (TP-Link boosters / Linksys wireless routers available) at points with power or Ethernet access, assuming PoE where useful. Field Journal: floor plan with signal readings, proposed AP placement diagram, and an equipment list with estimated cost — mirrors the original lab's site-survey report requirement.`,
+  },
+
+  {
+    // Ch6: TCP/IP — adapts Lab 4 / 4a (subnetting). Paper exercise, no
+    // equipment required.
+    id: "sc-net-04", courseId: "net", week: 4,
+    title: "Need our addressing plan checked before we touch any equipment",
     requesterId: "pgd-tina",
+    mode: "broadcast", priority: "Low",
+    categories: ["Diagnostics"],
+    description:
+`We're planning some network changes and I want our addressing worked out properly before anyone touches a cable. Can you go through the addressing scheme we sketched out and confirm the subnets, network addresses, and broadcast addresses are actually right?
+
+— Tina`,
+    instructorNotes:
+`Physical task: none — this is a paper/worksheet exercise (Lab 4/4a). Given a set of IP address + subnet mask combinations, determine the correct subnet, network address, broadcast address, and valid host range for each. Field Journal: completed subnetting worksheet with work shown, not just final answers.`,
+  },
+
+  {
+    // Ch6: TCP/IP — adapts Lab 14 (IPv6 addressing).
+    id: "sc-net-05", courseId: "net", week: 5,
+    title: "Let's get ahead of IPv6 before it's forced on us",
+    requesterId: "emb-dean",
+    mode: "individual", priority: "Medium",
+    categories: ["Router/Routing"],
+    description:
+`I want to get ahead of IPv6 rather than scramble later. Configure IPv6 addressing on one of the lab routers and confirm it's actually working — I want to see the full, unabbreviated address recorded, not just the shorthand, along with the commands you used to verify it.
+
+— Dean Okafor
+Ember Service Operations`,
+    instructorNotes:
+`Physical task: Configure an IPv6 address (e.g., 2001:0DB8:FEED:A::1/64) on a Cisco router's Fa0/0 interface (1941 or 2811). Verify with show ipv6 interface, and expand the abbreviated address to its full unabbreviated form by hand. Field Journal: commands used, abbreviated vs. full address side by side, verification output.`,
+  },
+
+  {
+    // Ch7: Introduction to Router Configuration — adapts Lab 5 (basic
+    // router CLI).
+    id: "sc-net-06", courseId: "net", week: 6,
+    title: "New router came in — needs to be set up before Friday",
+    requesterId: "pgd-tina",
+    mode: "individual", priority: "Medium",
+    categories: ["Router/Routing"],
+    description:
+`Hi — we received the router we ordered. It's still sitting in the box. We need it configured and ready to go before Friday. I don't have any previous config documentation for it. Can someone get it named, secured, and ready? Let me know if you need anything from our end.
+
+Thanks,
+Tina Park`,
+    instructorNotes:
+`Physical task: Console into a Cisco router (1941 or 2811). Practice privileged EXEC commands (show version, show history, show interfaces), set the hostname, configure the enable secret and VTY password, assign an IP address to Fa0/0, bring it up with no shut, and verify with a ping from a connected host. Field Journal: full command log noting what each command does, and the ping result.`,
+  },
+
+  {
+    // Ch9: Routing Protocols (static routing only — RIP/OSPF/EIGRP
+    // dropped from scope) — adapts Lab 7 (static routes).
+    id: "sc-net-07", courseId: "net", week: 7,
+    title: "Shop floor network and office network still can't talk to each other",
+    requesterId: "cmw-walt",
+    mode: "pairs", priority: "High",
+    categories: ["Router/Routing"],
+    description:
+`The shop floor network and the office network still can't talk to each other and I need them to. I don't care how — figure out whatever routing needs to happen and prove it actually works.
+
+— Walt Jensen, Cascade Millworks`,
+    instructorNotes:
+`Physical task: Two-router topology, LAN-A and LAN-B, each with its own subnet. Configure gateway IPs on both routers and connect them (use a routed Ethernet link between two routers if serial WIC modules aren't confirmed installed on the 2811/2800 fleet; if they are, use the original back-to-back serial link with clock rate set on the DCE side). Configure a static route on each router pointing to the other's subnet. Verify with ping across LANs and show ip route on both routers. Field Journal: routing table output from both routers, ping results, topology diagram.`,
+  },
+
+  {
+    // Ch8: Introduction to Switch Configuration — adapts Lab 6 (basic
+    // switch CLI).
+    id: "sc-net-08", courseId: "net", week: 8,
+    title: "There's a new switch in a box back there — can you get it doing something?",
+    requesterId: "cmw-marcus",
     mode: "individual", priority: "Medium",
     categories: ["Switch Configuration"],
     description:
-`Hi — we received the Cisco switch we ordered. It's still in the box on Dr. Reyes' desk. We need it configured and ready to go before Friday. I don't have the previous config documentation (I think Gary handled the last one). Can someone get it named, secured, and ready? Let me know if you need anything from our end.
+`There's a new switch in a box back there. I don't know what to do with it. Can you get it set up so it actually does something?
 
-Thanks,
-Tina Park
-Office Manager — Port Gardner Dental`,
+— Marcus`,
     instructorNotes:
-`Physical task: Connect to Cisco Catalyst via console cable. Access CLI. Set hostname, configure enable password and line passwords, save running config. Document all commands used and their purpose in Field Journal.`,
+`Physical task: Console into a Cisco Catalyst switch (2960 or 3560). Configure hostname, enable secret, and VTY password, assign an IP to the VLAN1 interface, bring it up with no shut, verify with sh vlan brief, check the switch's MAC address table, set the default-gateway, and confirm connectivity with ping. Field Journal: command log, MAC address table output, verification results.`,
   },
 
   {
-    id: "sc-net-04", courseId: "net", week: 4,
+    // Ch8: Introduction to Switch Configuration — adapts Lab 10 (static
+    // VLANs, with router sub-interfaces for controlled inter-VLAN
+    // routing per the original lab).
+    id: "sc-net-09", courseId: "net", week: 9,
     title: "Need to separate shop floor from office — they're on the same network",
     requesterId: "cmw-walt",
     mode: "pairs", priority: "High",
@@ -83,93 +186,23 @@ Office Manager — Port Gardner Dental`,
 
 — Walt Jensen, Cascade Millworks`,
     instructorNotes:
-`Physical task: Create two VLANs on Cisco switch (VLAN 10 — Office, VLAN 20 — Shop Floor). Assign ports. Verify same-VLAN communication succeeds and cross-VLAN communication fails (pre-routing). Draw VLAN topology diagram in Field Journal.`,
+`Physical task: Create two VLANs on a Catalyst switch (e.g., VLAN 10 Office, VLAN 20 Shop Floor), assign ports accordingly, then configure a router with sub-interfaces for each VLAN so inter-VLAN traffic is deliberately routed rather than wide open. Verify intra-VLAN connectivity works and inter-VLAN behavior matches what was configured. Field Journal: VLAN/port assignment table, router sub-interface configuration, verification results.`,
   },
 
   {
-    id: "sc-net-05", courseId: "net", week: 5,
-    title: "Router needs to be configured — operatories can't reach the server",
-    requesterId: "pgd-tina",
-    mode: "broadcast", priority: "High",
-    categories: ["Router/Routing"],
-    description:
-`The operatory workstations can't reach our practice management server since we moved things around last week. I think it's the router — the IT company that was here before said something about routing between subnets. I've attached a rough diagram of what we think the setup should look like. Can you take a look?
-
-— Tina`,
-    instructorNotes:
-`Physical task: Configure Cisco router — assign IPs to two interfaces, enable routing between subnets, verify end-to-end connectivity from hosts on each subnet. Record routing table output (show ip route) in Field Journal.`,
-  },
-
-  {
-    id: "sc-net-06", courseId: "net", week: 6,
-    title: "WiFi is out in the waiting room — moved the access point yesterday",
-    requesterId: "pgd-beth",
-    mode: "individual", priority: "High",
-    categories: ["Wireless","Diagnostics"],
-    description:
-`Hi! So the waiting room WiFi stopped working. I moved the access point yesterday because it was kind of in the way and the cord was ugly. I just plugged it back in the same way in the new spot. It looks like it's connected (the light is on) but nobody can get an internet connection. I didn't change any settings I don't think.
-
-— Beth`,
-    instructorNotes:
-`Physical task: Diagnose wireless AP — check DHCP scope, SSID broadcast settings, and cable/VLAN tagging from the move. Identify why clients can't get an IP despite the AP showing as connected. Document each diagnostic step in Field Journal using the Ember 8-step troubleshooting method.`,
-  },
-
-  {
-    id: "sc-net-07", courseId: "net", week: 7,
-    title: "Need someone to check what's on the network — something seems off",
-    requesterId: "pgd-tina",
-    mode: "broadcast", priority: "Medium",
+    // Ch11: Network Security — adapts Lab 11 (Windows/macOS host
+    // firewall rules).
+    id: "sc-net-10", courseId: "net", week: 10,
+    title: "Need proper firewall rules before our compliance review — not just \"it's on\"",
+    requesterId: "pgd-reyes",
+    mode: "individual", priority: "Medium",
     categories: ["Diagnostics"],
     description:
-`We've been having some intermittent slowdowns and I want to make sure there's nothing unexpected on our network. Can someone capture and analyze what traffic is actually going across it? Looking for anything that doesn't belong — unusual devices, unexpected connections, that kind of thing.
-
-— Tina`,
-    instructorNotes:
-`Physical task: Use Wireshark to capture live traffic on the lab network. Identify at minimum: one ARP request/reply, one ICMP exchange, one TCP three-way handshake. Annotate each in Field Journal with packet header labels.`,
-  },
-
-  {
-    id: "sc-net-08", courseId: "net", week: 8,
-    title: "New workstation won't connect — built it last week and now it's just sitting there",
-    requesterId: "cmw-cody",
-    mode: "individual", priority: "High",
-    categories: ["Cross-Course","Switch Configuration","Diagnostics"],
-    linkedCourse: "hw",
-    description:
-`So I built this PC last week and now I'm trying to get it on the network and it won't connect. I already tried plugging it into three different ports on the switch. I also tried going into the network settings and changing some stuff but I'm not sure if I made it better or worse. The NIC shows up in Device Manager at least.
-
-— Cody`,
-    instructorNotes:
-`Cross-course: The PC assembled in Hardware Lab 3 is the endpoint. Verify NIC seating and drivers, configure NIC, assign to VLAN 10, verify connectivity to router gateway. Reference Hardware lab build notes. Document IP config and ping results in Field Journal.`,
-  },
-
-  {
-    id: "sc-net-09", courseId: "net", week: 9,
-    title: "URGENT — Multiple systems down, network completely unresponsive",
-    requesterId: "pgd-reyes",
-    mode: "broadcast", priority: "Critical",
-    categories: ["Diagnostics","Switch Configuration","Router/Routing"],
-    description:
-`NETWORK IS DOWN. OPERATORIES 1, 2 AND 3 CANNOT REACH THE SERVER. PATIENTS ARE WAITING. WE CANNOT ACCESS SCHEDULING OR PATIENT RECORDS. THIS IS A PATIENT SAFETY ISSUE. NEED SOMEONE HERE NOW.
+`WE HAVE A COMPLIANCE REVIEW COMING UP AND I NEED TO KNOW OUR WORKSTATIONS AREN'T WIDE OPEN. Someone needs to set up proper firewall rules — I want to know exactly what's allowed in and out, not just told "the firewall is on."
 
 — Dr. Reyes`,
     instructorNotes:
-`Instructor introduces 3 hidden faults into the lab network before class. Students must diagnose each fault, open or update relevant tickets, and document the resolution path. Field Journal: write a brief incident report for each fault discovered. Students manage their own ticket queue during this exercise.`,
-  },
-
-  {
-    id: "sc-net-10", courseId: "net", week: 10,
-    title: "New office opening — need full network built from scratch",
-    requesterId: "emb-rosa",
-    mode: "teams", priority: "Critical",
-    categories: ["Cross-Course","Router/Routing","VLAN/Segmentation","Wireless"],
-    linkedCourse: "hw",
-    description:
-`We have a new client opening a second location and they need a complete network infrastructure before they open next month. The space is empty — no existing equipment. Scope: router, two switches, VLAN segmentation (staff/guest), wireless coverage, and four workstations networked and ready. I told them we'd have a plan by end of week. This is a relationship we can't afford to drop.
-
-— Rosa`,
-    instructorNotes:
-`Capstone: Teams build complete small-office network — 1 router, 2 switches, 2 VLANs, wireless AP, 4 endpoints including hardware-built PCs. Every decision documented as a ticket. Field Journal: complete network diagram, IP addressing scheme, and lessons learned section.`,
+`Physical task: Configure the Windows (or macOS) firewall with one specific inbound rule (allow ping only from one designated host) and one outbound rule (block web traffic from a specific host). Verify behavior with ping and browser tests before and after applying the rules. Field Journal: firewall rules configured (screenshots or command log), before/after test results, and a short note on which ports/protocols were involved.`,
   },
 
 
