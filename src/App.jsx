@@ -300,7 +300,7 @@ export default function App() {
         setClassStudents(all);
       });
       supabase.from("ticket_templates").select("*").order("course_id").order("week")
-        .then(({data})=>{ if(data) setCustomScenarios(data); });
+        .then(({data})=>{ if(data) setCustomScenarios(data.map(fromTicketTemplateRow)); });
     } else {
       supabase.from("assigned_tickets")
         .select("*, lab_assignments(week_label, assigned_at)")
@@ -311,14 +311,14 @@ export default function App() {
 
   async function saveCustomScenario(scenario) {
     if (scenario.id) {
-      const {error} = await supabase.from("ticket_templates").update(scenario).eq("id",scenario.id);
+      const {error} = await supabase.from("ticket_templates").update(toTicketTemplateRow(scenario)).eq("id",scenario.id);
       if (error) { showToast("Save failed: "+error.message,"error"); return false; }
       setCustomScenarios(prev=>prev.map(s=>s.id===scenario.id?scenario:s));
     } else {
       const id = "cst-"+Date.now();
-      const {data,error} = await supabase.from("ticket_templates").insert({...scenario,id}).select().single();
+      const {data,error} = await supabase.from("ticket_templates").insert({...toTicketTemplateRow(scenario),id}).select().single();
       if (error) { showToast("Save failed: "+error.message,"error"); return false; }
-      setCustomScenarios(prev=>[...prev,data]);
+      setCustomScenarios(prev=>[...prev,fromTicketTemplateRow(data)]);
     }
     showToast("Scenario saved.");
     return true;
@@ -350,10 +350,10 @@ export default function App() {
   }
 
   async function importScenarios(rows) {
-    const timestamped = rows.map((r,i)=>({...r, id:"cst-"+Date.now()+"-"+i}));
+    const timestamped = rows.map((r,i)=>({...toTicketTemplateRow(r), id:"cst-"+Date.now()+"-"+i}));
     const {data,error} = await supabase.from("ticket_templates").insert(timestamped).select();
     if (error) { showToast("Import failed: "+error.message,"error"); return; }
-    setCustomScenarios(prev=>[...prev,...data]);
+    setCustomScenarios(prev=>[...prev,...data.map(fromTicketTemplateRow)]);
     showToast(`Imported ${data.length} scenario(s).`);
   }
 
@@ -2039,6 +2039,14 @@ const BLANK_SCENARIO = {
   mode:"broadcast", categories:[], requesterId:"",
   description:"", instructorNotes:"",
 };
+
+function toTicketTemplateRow({requesterId="",instructorNotes="",scenario:storedScenario,...row}) {
+  return {...row,scenario:{...(storedScenario||{}),requesterId,instructorNotes}};
+}
+
+function fromTicketTemplateRow(row) {
+  return {...row,...(row.scenario||{})};
+}
 const COURSE_COLOR = {net:"#38bdf8",hw:"#fb923c",cyber:"#a78bfa"};
 const COURSE_LABEL = {net:"Networking",hw:"Hardware",cyber:"Cybersecurity"};
 

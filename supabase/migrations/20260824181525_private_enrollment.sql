@@ -102,7 +102,7 @@ begin
     raise exception 'invalid_enrollment' using errcode = '22023';
   end if;
 
-  if (select count(distinct code) from unnest(v_codes) code)
+  if (select count(distinct requested.code) from unnest(v_codes) requested(code))
      <> v_requested_count then
     raise exception 'invalid_enrollment' using errcode = '22023';
   end if;
@@ -224,7 +224,7 @@ begin
   v_requested_count := coalesce(cardinality(v_codes), 0);
 
   if v_requested_count < 1 or v_requested_count > 3
-     or (select count(distinct code) from unnest(v_codes) code)
+     or (select count(distinct requested.code) from unnest(v_codes) requested(code))
         <> v_requested_count then
     raise exception 'invalid_enrollment' using errcode = '22023';
   end if;
@@ -267,8 +267,8 @@ begin
 
   insert into public.profile_classes (profile_id, class_id)
   select v_user_id, class.id
-  from unnest(v_codes) code
-  join public.classes class on upper(class.code) = code;
+  from unnest(v_codes) requested(code)
+  join public.classes class on upper(class.code) = requested.code;
 end;
 $$;
 
