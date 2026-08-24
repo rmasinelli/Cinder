@@ -373,14 +373,20 @@ export default function App() {
   }
 
   async function saveLabNote(assignedTicketId, content) {
-    await supabase.from("lab_notes").upsert(
-      {assigned_ticket_id:assignedTicketId, student_id:session.id, content, updated_at:new Date().toISOString()},
-      {onConflict:"assigned_ticket_id,student_id"}
-    );
+    const serialized = typeof content === "string" ? content : JSON.stringify(content);
+    const {error} = await supabase.rpc("save_my_lab_note", {
+      p_assigned_ticket_id: assignedTicketId,
+      p_content: serialized,
+    });
+    if (error) throw error;
   }
 
   async function updateAssignedTicketStatus(ticketId, status) {
-    await supabase.from("assigned_tickets").update({status, ...(["Resolved","Closed"].includes(status)?{resolved_at:new Date().toISOString()}:{})}).eq("id",ticketId);
+    const {error} = await supabase.rpc("update_my_assigned_ticket_status", {
+      p_ticket_id: ticketId,
+      p_status: status,
+    });
+    if (error) { showToast("Status update failed: "+error.message,"error"); return; }
     setAssignedTickets(prev=>prev.map(t=>t.id===ticketId?{...t,status}:t));
   }
 
@@ -649,16 +655,14 @@ function Login({ onSignIn }) {
     const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
     if (signUpErr) { setErr(signUpErr.message); setLoading(false); return; }
 
-    // Create profile
-    const { error: profErr } = await supabase.from("profiles").insert({
-      id: data.user.id, alias: alias.trim(), role: "student", class_id: primaryClass.id,
+    // Complete profile + memberships atomically. Protected ownership and role
+    // values are derived inside the database rather than accepted from the UI.
+    const { error: enrollmentErr } = await supabase.rpc("complete_student_enrollment", {
+      p_alias: alias.trim(),
+      p_primary_class_id: primaryClass.id,
+      p_class_ids: classes.map(c=>c.id),
     });
-    if (profErr) { setErr("Account created but profile failed. Contact your instructor."); setLoading(false); return; }
-
-    // Enroll in all classes via junction table
-    await supabase.from("profile_classes").insert(
-      classes.map(c=>({ profile_id: data.user.id, class_id: c.id }))
-    );
+    if (enrollmentErr) { setErr("Account created but enrollment failed. Contact your instructor."); setLoading(false); return; }
 
     saveCode(alias.trim(), allCodes[0]);
     const profile = await onSignIn(data.user.id);
@@ -1143,8 +1147,12 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
       .maybeSingle()
       .then(({data})=>{
         const raw = data?.content;
-        if(raw?.notes) setAtNotes(raw.notes);
-        else setAtNotes([]);
+        try {
+          const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+          setAtNotes(parsed?.notes || []);
+        } catch {
+          setAtNotes([]);
+        }
       });
   },[selectedAssigned]);
 
