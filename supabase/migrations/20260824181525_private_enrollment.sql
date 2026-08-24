@@ -181,7 +181,7 @@ grant execute on function public.resolve_student_login(text, text)
 -- callers to bypass code status, expiry, and rotation controls.
 drop function if exists public.complete_student_enrollment(text, uuid, uuid[]);
 
-create function public.complete_student_enrollment(
+create or replace function public.complete_student_enrollment(
   p_alias text,
   p_class_codes text[]
 )
