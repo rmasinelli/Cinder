@@ -27,6 +27,10 @@ const supabaseClient = readFileSync(
   new URL("../src/lib/supabase.js", import.meta.url),
   "utf8",
 );
+const classroomDrafts = readFileSync(
+  new URL("../src/lib/classroomDrafts.mjs", import.meta.url),
+  "utf8",
+);
 
 test("the active migration path is complete and ordered", () => {
   const migrations = readdirSync(migrationDirectory)
@@ -135,4 +139,29 @@ test("browser storage is limited to safe device preferences", () => {
     .map(match=>match[1]||match[2]);
   assert.ok(storageKeys.length > 0);
   assert.ok(storageKeys.every(key=>key.startsWith("cinder:onboarded:")||key==="cinder:codes"));
+});
+
+test("unsent classroom notes have truthful save states and draft recovery", () => {
+  assert.match(classroomDrafts, /const PREFIX = "cinder:draft:"/);
+  assert.match(classroomDrafts, /storage\.setItem\(classroomDraftKey/);
+  assert.match(classroomDrafts, /storage\.removeItem\(classroomDraftKey/);
+  assert.match(app, /phase:"saving"/);
+  assert.match(app, /phase:"failed"/);
+  assert.match(app, /phase:"saved"/);
+  assert.match(app, /window\.addEventListener\("beforeunload"/);
+  assert.match(app, /This note has not reached the server yet/);
+  assert.match(app, /await onSaveNote\(selectedAssigned,\{notes:next\}\);[\s\S]*?clearClassroomDraft/);
+});
+
+test("retrying a recovered note is idempotent in the client", () => {
+  assert.match(classroomDrafts, /notes\.some\(existing=>existing\.id===note\.id\)/);
+  assert.match(app, /id:draft\?\.id\|\|crypto\.randomUUID\(\)/);
+  assert.match(app, /const next=appendUniqueNote\(atNotes,newNote\)/);
+  assert.doesNotMatch(app, /setAtNotes\(next\);[\s\S]*?await onSaveNote/);
+});
+
+test("failed status writes do not appear saved", () => {
+  assert.match(app, /Status update failed:[\s\S]*?throw error;[\s\S]*?setAssignedTickets/);
+  assert.match(app, /await onStatusChange\(ticketId,nextStatus\);[\s\S]*?phase:"saved"/);
+  assert.match(app, /lastSavedAt/);
 });

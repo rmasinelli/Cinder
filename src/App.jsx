@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./lib/supabase.js";
 import { listKnowledgeArticles, saveKnowledgeArticle, deleteKnowledgeArticle } from "./lib/knowledgeBase.js";
+import { appendUniqueNote, clearClassroomDraft, hasClassroomDraft, loadClassroomDraft, saveClassroomDraft } from "./lib/classroomDrafts.mjs";
 import { COURSES, courseById } from "./data/courses.js";
 import { CLIENTS } from "./data/clients.js";
 import { PERSON_BY_ID, ORG_COLOR } from "./data/people.js";
@@ -381,8 +382,9 @@ export default function App() {
       p_ticket_id: ticketId,
       p_status: status,
     });
-    if (error) { showToast("Status update failed: "+error.message,"error"); return; }
+    if (error) { showToast("Status update failed: "+error.message,"error"); throw error; }
     setAssignedTickets(prev=>prev.map(t=>t.id===ticketId?{...t,status}:t));
+    return {savedAt:new Date().toISOString()};
   }
 
   if(!ready) return (
@@ -778,7 +780,11 @@ function Shell({session,onLogout,view,setView,unread,children}) {
   const [navOpen,setNavOpen] = useState(false);
 
   // Close drawer when navigating
-  function nav(id){ setView(id); setNavOpen(false); }
+  function confirmLeaveDraft(){
+    return view!=="my-tickets"||!hasClassroomDraft(localStorage)||window.confirm("You have a note that has not reached the server. It is saved on this device. Leave My Tickets?");
+  }
+  function nav(id){ if(!confirmLeaveDraft()) return; setView(id); setNavOpen(false); }
+  function logout(){ if(confirmLeaveDraft()) onLogout(); }
 
   // Courses this student actually has access to, derived from real class enrollment.
   // Admins aren't enrolled in classes the same way, so they see every course.
@@ -825,7 +831,7 @@ function Shell({session,onLogout,view,setView,unread,children}) {
           <span style={{background:ROLE_COLOR[session.role]+"22",color:ROLE_COLOR[session.role],padding:"1px 6px",borderRadius:3,textTransform:"uppercase",letterSpacing:"0.08em",fontSize:9,fontWeight:700}}>{session.role}</span>
           {session.role!=="admin"&&enrolledCourseIds.length>0&&<span style={{color:"#4A3828",fontSize:9}}>{enrolledCourseIds.map(id=>id.toUpperCase()).join(" + ")}</span>}
         </div>
-        <button onClick={onLogout} style={{marginTop:12,fontSize:11,color:"#6A5848",background:"none",border:"none",cursor:"pointer",padding:0}}>← Sign out</button>
+        <button onClick={logout} style={{marginTop:12,fontSize:11,color:"#6A5848",background:"none",border:"none",cursor:"pointer",padding:0}}>← Sign out</button>
       </div>
     </>
   );
@@ -1048,6 +1054,8 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
   const [postingNote,setPostingNote]=useState(false);
+  const [noteSave,setNoteSave]=useState({phase:"idle",lastSavedAt:null,error:null});
+  const [statusSave,setStatusSave]=useState({phase:"idle",lastSavedAt:null,error:null});
   const mine=tickets.filter(t=>t.submittedBy===session.id||t.assignedTo===session.id)
     .sort((a,b)=>new Date(b.created)-new Date(a.created));
 
@@ -1059,12 +1067,21 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
   // Load notes from lab_notes when an assigned ticket is opened
   useEffect(()=>{
     if(!selectedAssigned){ setAtNotes([]); setNoteText(""); return; }
+    const draft = loadClassroomDraft(localStorage,session.id,selectedAssigned);
+    setNoteText(draft?.text||"");
+    setNoteSave(draft?.text
+      ? {phase:"failed",lastSavedAt:null,error:"Draft recovered from this device. Retry when connected."}
+      : {phase:"idle",lastSavedAt:null,error:null});
     supabase.from("lab_notes")
-      .select("content")
+      .select("content, updated_at")
       .eq("assigned_ticket_id",selectedAssigned)
       .eq("student_id",session.id)
       .maybeSingle()
-      .then(({data})=>{
+      .then(({data,error})=>{
+        if(error){
+          setNoteSave(current=>({...current,phase:"failed",error:"Could not load the last server save."}));
+          return;
+        }
         const raw = data?.content;
         try {
           const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -1072,18 +1089,70 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
         } catch {
           setAtNotes([]);
         }
+        if(data?.updated_at) setNoteSave(current=>({...current,lastSavedAt:data.updated_at}));
       });
-  },[selectedAssigned]);
+  },[selectedAssigned,session.id]);
+
+  useEffect(()=>{
+    if(!selectedAssigned) return;
+    if(noteText.trim()) {
+      const existing = loadClassroomDraft(localStorage,session.id,selectedAssigned);
+      saveClassroomDraft(localStorage,session.id,selectedAssigned,{
+        id:existing?.id||crypto.randomUUID(),text:noteText,updatedAt:new Date().toISOString(),
+      });
+    } else if(noteSave.phase!=="saving") {
+      clearClassroomDraft(localStorage,session.id,selectedAssigned);
+    }
+  },[noteText,selectedAssigned,session.id,noteSave.phase]);
+
+  const hasUnsavedNote = Boolean(noteText.trim());
+  useEffect(()=>{
+    if(!hasUnsavedNote) return;
+    const warn = event=>{ event.preventDefault(); event.returnValue=""; };
+    window.addEventListener("beforeunload",warn);
+    return ()=>window.removeEventListener("beforeunload",warn);
+  },[hasUnsavedNote]);
 
   async function postNote(){
     if(!noteText.trim()||postingNote) return;
     setPostingNote(true);
-    const newNote={author:session.id,authorName:session.alias||session.email,text:noteText.trim(),ts:new Date().toISOString()};
-    const next=[...atNotes,newNote];
-    await onSaveNote(selectedAssigned,{notes:next});
-    setAtNotes(next);
-    setNoteText("");
-    setPostingNote(false);
+    setNoteSave(current=>({...current,phase:"saving",error:null}));
+    const draft = loadClassroomDraft(localStorage,session.id,selectedAssigned);
+    const newNote={id:draft?.id||crypto.randomUUID(),author:session.id,authorName:session.name||session.email||"You",text:noteText.trim(),ts:draft?.updatedAt||new Date().toISOString()};
+    const next=appendUniqueNote(atNotes,newNote);
+    try {
+      await onSaveNote(selectedAssigned,{notes:next});
+      const savedAt=new Date().toISOString();
+      setAtNotes(next);
+      setNoteText("");
+      clearClassroomDraft(localStorage,session.id,selectedAssigned);
+      setNoteSave({phase:"saved",lastSavedAt:savedAt,error:null});
+    } catch(error) {
+      setNoteSave(current=>({...current,phase:"failed",error:error?.message||"Save failed. Your draft is safe on this device."}));
+    } finally {
+      setPostingNote(false);
+    }
+  }
+
+  async function changeStatus(ticketId,nextStatus){
+    setStatusSave(current=>({...current,phase:"saving",error:null}));
+    try {
+      const result=await onStatusChange(ticketId,nextStatus);
+      setStatusSave({phase:"saved",lastSavedAt:result?.savedAt||new Date().toISOString(),error:null});
+    } catch(error) {
+      setStatusSave(current=>({...current,phase:"failed",error:error?.message||"Status was not saved."}));
+    }
+  }
+
+  function SaveState({state,label="Work"}) {
+    const color=state.phase==="failed"?"#f87171":state.phase==="saved"?"#4ade80":"#8A7868";
+    const text=state.phase==="saving"?"Saving…":state.phase==="failed"?`Not saved — ${state.error}`:state.lastSavedAt?`Saved ${new Date(state.lastSavedAt).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}`:`${label} not saved yet`;
+    return <div role="status" aria-live="polite" style={{fontSize:11,color,marginTop:6}}>{text}</div>;
+  }
+
+  function leaveAssignedTicket(){
+    if(hasUnsavedNote&&!window.confirm("This note has not reached the server yet. It is saved as a draft on this device. Leave the ticket?")) return;
+    setSelectedAssigned(null);
   }
 
   // ── Assigned ticket detail — matches TicketDetail layout exactly ──
@@ -1104,7 +1173,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
 
           {/* Top breadcrumb bar */}
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:"1px solid #1E1E1E"}}>
-            <button onClick={()=>setSelectedAssigned(null)} style={btnGhost}>
+            <button onClick={leaveAssignedTicket} style={btnGhost}>
               ← Back
             </button>
             <span style={{color:"#3A3A3A",fontSize:12}}>/</span>
@@ -1114,12 +1183,15 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
             {course&&<span style={{fontSize:11,color:course.color,fontWeight:700,background:course.color+"15",border:`1px solid ${course.color}30`,borderRadius:4,padding:"3px 8px"}}>{course.icon} {course.id.toUpperCase()}</span>}
             {at.group_tag&&<span style={{fontSize:11,color:"#a78bfa",background:"#a78bfa15",borderRadius:4,padding:"3px 8px"}}>👥 {at.group_tag}</span>}
             <div style={{flex:1}}/>
-            <select value={at.status} onChange={e=>onStatusChange(at.id,e.target.value)}
+            <div style={{textAlign:"right"}}>
+            <select value={at.status} disabled={statusSave.phase==="saving"} onChange={e=>changeStatus(at.id,e.target.value)}
               style={{...inputStyle,width:"auto",padding:"6px 10px",fontSize:12,
                 background:STATUS_COLOR[at.status]+"18",border:`1px solid ${STATUS_COLOR[at.status]}55`,
                 color:STATUS_COLOR[at.status],fontWeight:700}}>
               {statusOptions.map(s=><option key={s} style={{background:"#1A1A1A",color:"#EDE9E3"}}>{s}</option>)}
             </select>
+            <SaveState state={statusSave} label="Status" />
+            </div>
           </div>
 
           {/* Title block */}
@@ -1190,7 +1262,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                     {initials(session.alias||session.email||"?")}
                   </div>
                   <div style={{flex:1}}>
-                    <textarea value={noteText} onChange={e=>setNoteText(e.target.value)}
+                    <textarea value={noteText} onChange={e=>{setNoteText(e.target.value);setNoteSave(current=>({...current,phase:"idle",error:null}));}}
                       placeholder="Add a note or update…"
                       style={{...inputStyle,minHeight:80,resize:"vertical",lineHeight:1.6,fontSize:13,width:"100%",boxSizing:"border-box"}} />
                     <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
@@ -1199,6 +1271,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                         {postingNote?"Posting…":"Post Note"}
                       </button>
                     </div>
+                    <SaveState state={noteSave} label="Note" />
                   </div>
                 </div>
               </div>
@@ -1210,9 +1283,10 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                 <div style={{padding:"10px 16px",borderBottom:"1px solid #1E1E1E",fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038"}}>Properties</div>
                 <div style={{padding:"14px 16px"}}>
                   <Field label="Status">
-                    <select value={at.status} onChange={e=>onStatusChange(at.id,e.target.value)} style={inputStyle}>
+                    <select value={at.status} disabled={statusSave.phase==="saving"} onChange={e=>changeStatus(at.id,e.target.value)} style={inputStyle}>
                       {statusOptions.map(s=><option key={s} value={s}>{s}</option>)}
                     </select>
+                    <SaveState state={statusSave} label="Status" />
                   </Field>
                   <DetailRow label="Priority" val={<span style={{fontSize:11,fontWeight:700,color:railColor}}>{at.priority}</span>} />
                   {course&&<DetailRow label="Course" val={<span style={{color:course.color,fontSize:12}}>{course.icon} {course.label}</span>} />}
