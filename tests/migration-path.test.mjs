@@ -12,6 +12,7 @@ const expectedMigrations = [
   "20260824192643_normalize_ticket_quarter_codes.sql",
   "20260824193301_link_printed_field_journal.sql",
   "20260824195145_instructor_verification_signoff.sql",
+  "20260824201440_restore_legacy_login_memberships.sql",
 ];
 
 const baseline = readFileSync(
