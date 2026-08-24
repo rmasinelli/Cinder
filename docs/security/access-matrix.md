@@ -8,7 +8,7 @@ not listed because it bypasses RLS and must never be used in the browser.
 
 | Resource | Anonymous | Student | Instructor/admin |
 | --- | --- | --- | --- |
-| `classes` | Read for current enrollment flow | Read | Read, create, edit, delete |
+| `classes` | No table access; exact-code validation RPC only | Sanitized metadata for enrolled classes through `get_my_classes` | Read, create, edit, delete, and rotate codes |
 | `profiles` | None | Read own; create once through `complete_student_enrollment` | Read and edit all |
 | `profile_classes` | None | Read own; initial enrollment only through `complete_student_enrollment` | Read, add, remove |
 | `ticket_templates` | None | Read | Read, create, edit, delete |
@@ -47,8 +47,8 @@ the runtime boundary with separate student and instructor accounts:
 6. Run Supabase Database Linter and Security Advisor. Attach the output to
    Issue #7 before closing it.
 
-The anonymous class-code lookup remains intentionally available for the current
-join flow. Restricting and rotating enrollment codes is tracked in Issue #8.
+Enrollment-code privacy, rotation, expiry, and late-add procedures are defined
+in [enrollment operations](./enrollment-operations.md).
 
 ## Production verification — August 24, 2026
 
