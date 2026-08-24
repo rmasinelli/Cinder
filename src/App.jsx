@@ -162,7 +162,7 @@ export default function App() {
   const refreshAssignedTickets = useCallback(async currentSession => {
     if (!currentSession) return;
     let query = supabase.from("assigned_tickets")
-      .select("*, lab_assignments(week_label, assigned_at, class_id)")
+      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(manual_type, service_log_number, station_id)")
       .order("created_at",{ascending:false});
     if (currentSession.role !== "admin") query = query.eq("student_id",currentSession.id);
     const {data,error} = await query;
@@ -377,6 +377,28 @@ export default function App() {
     if (error) throw error;
   }
 
+  async function saveFieldJournalLink(ticketId, fields) {
+    const {error} = await supabase.rpc("save_my_field_journal_link", {
+      p_assigned_ticket_id:ticketId,
+      p_manual_type:fields.manualType,
+      p_service_log_number:Number(fields.serviceLogNumber),
+      p_station_id:fields.stationId,
+      p_asset_ids:fields.assetIds.split(",").map(value=>value.trim()).filter(Boolean),
+      p_team_role:fields.teamRole,
+      p_impact:fields.impact||null,
+      p_urgency:fields.urgency||null,
+      p_chosen_priority:fields.chosenPriority||null,
+      p_clarifying_question:fields.clarifyingQuestion,
+      p_client_response:fields.clientResponse,
+      p_escalation_reason:fields.escalationReason,
+      p_verification_checklist:fields.verification,
+      p_client_resolution:fields.clientResolution,
+    });
+    if(error) throw error;
+    await refreshAssignedTickets(session);
+    return {savedAt:new Date().toISOString()};
+  }
+
   async function updateAssignedTicketStatus(ticketId, status) {
     const {error} = await supabase.rpc("update_my_assigned_ticket_status", {
       p_ticket_id: ticketId,
@@ -422,6 +444,7 @@ export default function App() {
           initialAssigned={deepAssigned}
           onConsumeInitial={()=>setDeepAssigned(null)}
           onSaveNote={saveLabNote}
+          onSaveFieldJournal={saveFieldJournalLink}
           onStatusChange={updateAssignedTicketStatus}
           onOpen={()=>{}} />
       )}
@@ -1053,7 +1076,98 @@ function SubmitTicket({session,courses,onSubmit,onBack}) {
 // ═══════════════════════════════════════════════════════════════
 // MY TICKETS
 // ═══════════════════════════════════════════════════════════════
-function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onStatusChange}) {
+const VERIFICATION_ITEMS = [
+  ["symptomRetested","Original symptom retested"],
+  ["fixConfirmed","Fix remains after restart/reconnect"],
+  ["safetyChecked","Workspace and equipment safety checked"],
+  ["clientConfirmed","Client-facing result confirmed"],
+];
+
+function FieldJournalLink({ticket,session,onSave}) {
+  const defaultManual=ticket.course_id==="net"?"Network":ticket.course_id==="sec"?"Security":"Hardware";
+  const [form,setForm]=useState({
+    manualType:defaultManual,serviceLogNumber:ticket.week||1,stationId:"",assetIds:"",teamRole:"",
+    impact:"",urgency:"",chosenPriority:ticket.priority||"",clarifyingQuestion:"",clientResponse:"",
+    escalationReason:"",verification:{},clientResolution:"",
+  });
+  const [loading,setLoading]=useState(true);
+  const [saveState,setSaveState]=useState({phase:"idle",lastSavedAt:null,error:null});
+
+  useEffect(()=>{
+    let active=true;
+    supabase.from("field_journal_links").select("*")
+      .eq("assigned_ticket_id",ticket.id).eq("student_id",session.id).maybeSingle()
+      .then(({data,error})=>{
+        if(!active) return;
+        if(error) setSaveState({phase:"failed",lastSavedAt:null,error:"Could not load the Field Journal link."});
+        if(data) setForm({
+          manualType:data.manual_type,serviceLogNumber:data.service_log_number,stationId:data.station_id||"",
+          assetIds:(data.asset_ids||[]).join(", "),teamRole:data.team_role||"",impact:data.impact||"",
+          urgency:data.urgency||"",chosenPriority:data.chosen_priority||"",clarifyingQuestion:data.clarifying_question||"",
+          clientResponse:data.client_response||"",escalationReason:data.escalation_reason||"",
+          verification:data.verification_checklist||{},clientResolution:data.client_resolution||"",
+        });
+        if(data?.updated_at) setSaveState({phase:"saved",lastSavedAt:data.updated_at,error:null});
+        setLoading(false);
+      });
+    return ()=>{ active=false; };
+  },[ticket.id,session.id]);
+
+  function update(field,value){ setForm(current=>({...current,[field]:value})); setSaveState(current=>({...current,phase:"idle",error:null})); }
+  async function save(){
+    if(saveState.phase==="saving") return;
+    setSaveState(current=>({...current,phase:"saving",error:null}));
+    try {
+      const result=await onSave(ticket.id,form);
+      setSaveState({phase:"saved",lastSavedAt:result?.savedAt||new Date().toISOString(),error:null});
+    } catch(error) {
+      setSaveState(current=>({...current,phase:"failed",error:error?.message||"Field Journal link was not saved."}));
+    }
+  }
+
+  const serviceRef=`TKT-${String(form.serviceLogNumber||0).padStart(4,"0")}`;
+  const stateText=saveState.phase==="saving"?"Saving…":saveState.phase==="failed"?`Not saved — ${saveState.error}`:saveState.lastSavedAt?`Saved ${new Date(saveState.lastSavedAt).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}`:"Not saved yet";
+  if(loading) return <div style={{marginTop:16,color:"#6A5848",fontSize:12}}>Loading Field Journal link…</div>;
+
+  return (
+    <div style={{marginTop:16,background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+      <div style={{padding:"14px 20px",borderBottom:"1px solid #1E1E1E",display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontSize:11,textTransform:"uppercase",letterSpacing:"0.1em",color:"#E8922E",fontWeight:700}}>Printed Field Journal Link</div>
+          <div style={{fontSize:12,color:"#8A7868",marginTop:4}}>Detailed tool, action, reason, and observation notes stay in the printed manual.</div>
+        </div>
+        <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"#F0EDE8",background:"#0D0D0D",border:"1px solid #2A2A2A",borderRadius:6,padding:"6px 10px"}}>
+          {form.manualType} · {serviceRef} ↔ {ticket.ticket_number}
+        </div>
+      </div>
+      <div style={{padding:"18px 20px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:"0 14px"}}>
+          <Field label="Manual Type"><select value={form.manualType} onChange={event=>update("manualType",event.target.value)} style={inputStyle}>{["Hardware","Network","Security"].map(value=><option key={value}>{value}</option>)}</select></Field>
+          <Field label="Service Log Number"><input type="number" min="1" max="99" value={form.serviceLogNumber} onChange={event=>update("serviceLogNumber",event.target.value)} style={inputStyle}/></Field>
+          <Field label="Station ID"><input value={form.stationId} onChange={event=>update("stationId",event.target.value)} style={inputStyle} placeholder="e.g. HW-POST-01"/></Field>
+          <Field label="Asset IDs"><input value={form.assetIds} onChange={event=>update("assetIds",event.target.value)} style={inputStyle} placeholder="Comma-separated asset tags"/></Field>
+          <Field label="Student Team Role"><input value={form.teamRole} onChange={event=>update("teamRole",event.target.value)} style={inputStyle} placeholder="Lead, diagnostics, documentation…"/></Field>
+          <Field label="Chosen Priority"><select value={form.chosenPriority} onChange={event=>update("chosenPriority",event.target.value)} style={inputStyle}><option value="">Choose…</option>{PRIORITIES.map(value=><option key={value}>{value}</option>)}</select></Field>
+          <Field label="Impact"><select value={form.impact} onChange={event=>update("impact",event.target.value)} style={inputStyle}><option value="">Choose…</option>{["Single user","Small group","Classroom","Service wide"].map(value=><option key={value}>{value}</option>)}</select></Field>
+          <Field label="Urgency"><select value={form.urgency} onChange={event=>update("urgency",event.target.value)} style={inputStyle}><option value="">Choose…</option>{["Low","Normal","High","Immediate"].map(value=><option key={value}>{value}</option>)}</select></Field>
+        </div>
+        <Field label="Clarifying Question"><textarea value={form.clarifyingQuestion} onChange={event=>update("clarifyingQuestion",event.target.value)} style={{...inputStyle,minHeight:58,resize:"vertical"}} placeholder="What did you need to ask before acting?"/></Field>
+        <Field label="Client Response"><textarea value={form.clientResponse} onChange={event=>update("clientResponse",event.target.value)} style={{...inputStyle,minHeight:58,resize:"vertical"}} placeholder="What information did the client provide?"/></Field>
+        <Field label="Escalation Reason"><textarea value={form.escalationReason} onChange={event=>update("escalationReason",event.target.value)} style={{...inputStyle,minHeight:58,resize:"vertical"}} placeholder="If escalated, what exceeded your access, time, or skill boundary?"/></Field>
+        <Field label="Verification Checklist">
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:8}}>{VERIFICATION_ITEMS.map(([key,label])=><label key={key} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#B8A898",background:"#101010",border:"1px solid #242424",borderRadius:6,padding:"8px 10px"}}><input type="checkbox" checked={Boolean(form.verification[key])} onChange={event=>update("verification",{...form.verification,[key]:event.target.checked})}/>{label}</label>)}</div>
+        </Field>
+        <Field label="Client-facing Resolution"><textarea value={form.clientResolution} onChange={event=>update("clientResolution",event.target.value)} style={{...inputStyle,minHeight:70,resize:"vertical"}} placeholder="Briefly state what was restored and any next step. Do not copy the troubleshooting log."/></Field>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <div role="status" aria-live="polite" style={{fontSize:11,color:saveState.phase==="failed"?"#f87171":saveState.phase==="saved"?"#4ade80":"#8A7868"}}>{stateText}</div>
+          <button onClick={save} disabled={saveState.phase==="saving"||!form.manualType||!Number(form.serviceLogNumber)} style={{...btnPrimary,width:"auto",padding:"8px 18px",opacity:saveState.phase==="saving"?0.5:1}}>Save Field Journal Link</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
@@ -1264,6 +1378,8 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                 </div>
               </div>
 
+              <FieldJournalLink key={at.id} ticket={at} session={session} onSave={onSaveFieldJournal} />
+
               {/* Activity thread */}
               <div style={{marginTop:16,background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
                 <div style={{padding:"10px 20px",borderBottom:"1px solid #1E1E1E",display:"flex",alignItems:"center",gap:8}}>
@@ -1383,6 +1499,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
               const railColor = PRI_RAIL[t.priority]||"#6b7280";
               const isResolved = t.status==="Closed";
               const initials = requester ? requester.name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase() : "?";
+              const journalLink=Array.isArray(t.field_journal_links)?t.field_journal_links[0]:t.field_journal_links;
               return (
                 <div key={t.id} className="at-row" onClick={()=>setSelectedAssigned(t.id)}
                   style={{display:"flex",alignItems:"center",gap:0,
@@ -1394,6 +1511,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                     {/* Subject */}
                     <div style={{flex:1,padding:"14px 16px",minWidth:0}}>
                       <div style={{fontSize:10,color:"#6A5848",fontFamily:"'JetBrains Mono',monospace",marginBottom:3}}>{t.ticket_number}</div>
+                      {journalLink&&<div style={{fontSize:9,color:"#8A7868",marginBottom:3}}>{journalLink.manual_type} · TKT-{String(journalLink.service_log_number).padStart(4,"0")}</div>}
                       <div style={{fontSize:13,fontWeight:500,color:isResolved?"#6A5848":"#EDE9E3",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                         {t.title.replace(/^\[W\d+\] /,"")}
                       </div>
@@ -1468,10 +1586,14 @@ function AssignmentQueue({tickets,students}) {
         <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
           {visible.map((ticket,index)=>{
             const course=courseById(ticket.course_id);
+            const journalLink=Array.isArray(ticket.field_journal_links)?ticket.field_journal_links[0]:ticket.field_journal_links;
             return (
               <div key={ticket.id} style={{display:"grid",gridTemplateColumns:"110px minmax(180px,1.5fr) minmax(120px,1fr) 110px 130px",gap:16,
                 padding:"14px 18px",alignItems:"center",borderBottom:index<visible.length-1?"1px solid #1E1E1E":"none"}}>
-                <div style={{fontSize:11,color:"#E8922E",fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{ticket.ticket_number}</div>
+                <div>
+                  <div style={{fontSize:11,color:"#E8922E",fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{ticket.ticket_number}</div>
+                  {journalLink&&<div style={{fontSize:9,color:"#6A5848",marginTop:3}}>{journalLink.manual_type} · TKT-{String(journalLink.service_log_number).padStart(4,"0")}</div>}
+                </div>
                 <div>
                   <div style={{fontSize:13,color:"#EDE9E3",fontWeight:600}}>{ticket.title.replace(/^\[W\d+\] /,"")}</div>
                   <div style={{fontSize:10,color:course?.color||"#6A5848",marginTop:3}}>{course?.label||ticket.course_id?.toUpperCase()||"General"}</div>
