@@ -97,6 +97,8 @@ function GlobalStyles(){
       .kb-layout-grid{display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start;}
       .ir-grid{display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;}
       .new-ticket-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+      .student-ticket-row{display:flex;align-items:center;}
+      .student-action-card{position:sticky;top:20px;}
 
       @media(max-width:767px){
         .mob-topbar{display:flex;position:fixed;top:0;left:0;right:0;height:54px;background:#0D0D0D;border-bottom:1px solid #242424;align-items:center;justify-content:space-between;padding:0 16px;z-index:200;}
@@ -113,6 +115,9 @@ function GlobalStyles(){
         .kb-layout-grid{grid-template-columns:1fr!important;}
         .ir-grid{grid-template-columns:1fr!important;}
         .new-ticket-grid{grid-template-columns:1fr!important;}
+        .student-ticket-row{align-items:flex-start!important;}
+        .student-ticket-meta{display:none!important;}
+        .student-action-card{position:static!important;}
         .tkt-row-hide{display:none!important;}
       }
     `}</style>
@@ -1197,6 +1202,21 @@ function FieldJournalLink({ticket,session,onSave}) {
   );
 }
 
+const STUDENT_FLOW = [
+  {label:"Triage",statuses:["New","Triage"]},
+  {label:"Work",statuses:["In Progress"]},
+  {label:"Communicate",statuses:["Waiting","Escalated"]},
+  {label:"Verify",statuses:["Verification"]},
+  {label:"Signed off",statuses:["Closed"]},
+];
+
+function StudentWorkflow({status}) {
+  const active=Math.max(0,STUDENT_FLOW.findIndex(step=>step.statuses.includes(status)));
+  return <div style={{display:"grid",gridTemplateColumns:"repeat(5,minmax(64px,1fr))",gap:6,marginBottom:20,overflowX:"auto"}}>
+    {STUDENT_FLOW.map((step,index)=><div key={step.label} style={{minWidth:64,borderTop:`3px solid ${index<=active?"#E8922E":"#242424"}`,paddingTop:7,fontSize:10,color:index===active?"#F0EDE8":index<active?"#8A7868":"#4A3828",fontWeight:index===active?700:500}}>{index+1}. {step.label}</div>)}
+  </div>;
+}
+
 function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
@@ -1360,10 +1380,12 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
       const isResolved = at.status==="Closed";
       const studentTransitions=STATUS_TRANSITIONS[at.status]||[];
       const statusOptions = [at.status,...studentTransitions.filter(next=>next!=="Closed"&&at.status!=="Closed")];
+      const nextActions=statusOptions.filter(status=>status!==at.status);
       const initials = name => name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase();
 
       return (
         <div style={{maxWidth:1040,fontFamily:"'Inter',sans-serif"}}>
+          <StudentWorkflow status={at.status}/>
 
           {/* Top breadcrumb bar */}
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingBottom:16,borderBottom:"1px solid #1E1E1E"}}>
@@ -1377,15 +1399,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
             {course&&<span style={{fontSize:11,color:course.color,fontWeight:700,background:course.color+"15",border:`1px solid ${course.color}30`,borderRadius:4,padding:"3px 8px"}}>{course.icon} {course.id.toUpperCase()}</span>}
             {at.group_tag&&<span style={{fontSize:11,color:"#a78bfa",background:"#a78bfa15",borderRadius:4,padding:"3px 8px"}}>👥 {at.group_tag}</span>}
             <div style={{flex:1}}/>
-            <div style={{textAlign:"right"}}>
-            <select value={at.status} disabled={statusSave.phase==="saving"} onChange={e=>changeStatus(at.id,e.target.value)}
-              style={{...inputStyle,width:"auto",padding:"6px 10px",fontSize:12,
-                background:STATUS_COLOR[at.status]+"18",border:`1px solid ${STATUS_COLOR[at.status]}55`,
-                color:STATUS_COLOR[at.status],fontWeight:700}}>
-              {statusOptions.map(s=><option key={s} style={{background:"#1A1A1A",color:"#EDE9E3"}}>{s}</option>)}
-            </select>
-            <SaveState state={statusSave} label="Status" />
-            </div>
+            <div style={{textAlign:"right"}}>{badge(at.status,STATUS_COLOR[at.status])}<SaveState state={statusSave} label="Status" /></div>
           </div>
 
           {/* Title block */}
@@ -1475,15 +1489,18 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
 
             {/* Sidebar */}
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              <div className="student-action-card" style={{background:"#181410",border:"1px solid #E8922E55",borderRadius:10,padding:"16px"}}>
+                <div style={{fontSize:10,color:"#E8922E",textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:6}}>Next required action</div>
+                <div style={{fontSize:12,color:"#B8A898",lineHeight:1.55,marginBottom:12}}>{at.status==="New"?"Read the client request, assess impact and urgency, then begin triage.":at.status==="Verification"?"Your work is waiting for instructor sign-off. Resume only if you need to make a correction.":at.status==="Closed"?"Instructor sign-off is complete. No further action is required.":"Post a concise progress update, keep detailed steps in print, then advance the ticket."}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {nextActions.map(next=><button key={next} disabled={statusSave.phase==="saving"} onClick={()=>changeStatus(at.id,next)} style={{...btnPrimary,width:"100%",padding:"9px 12px"}}>{next==="Verification"?"Submit for instructor verification":next==="Escalated"?"Escalate with reason":next==="In Progress"?"Continue work":`Move to ${next}`}</button>)}
+                </div>
+                <SaveState state={statusSave} label="Status" />
+              </div>
               <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
                 <div style={{padding:"10px 16px",borderBottom:"1px solid #1E1E1E",fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038"}}>Properties</div>
                 <div style={{padding:"14px 16px"}}>
-                  <Field label="Status">
-                    <select value={at.status} disabled={statusSave.phase==="saving"} onChange={e=>changeStatus(at.id,e.target.value)} style={inputStyle}>
-                      {statusOptions.map(s=><option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <SaveState state={statusSave} label="Status" />
-                  </Field>
+                  <DetailRow label="Status" val={badge(at.status,STATUS_COLOR[at.status])} />
                   <DetailRow label="Priority" val={<span style={{fontSize:11,fontWeight:700,color:railColor}}>{at.priority}</span>} />
                   {course&&<DetailRow label="Course" val={<span style={{color:course.color,fontSize:12}}>{course.icon} {course.label}</span>} />}
                   {at.lab_assignments?.week_label&&<DetailRow label="Assignment" val={<span style={{fontSize:11,color:"#8A7868"}}>{at.lab_assignments.week_label}</span>} />}
@@ -1559,7 +1576,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
               const initials = requester ? requester.name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase() : "?";
               const journalLink=Array.isArray(t.field_journal_links)?t.field_journal_links[0]:t.field_journal_links;
               return (
-                <div key={t.id} className="at-row" onClick={()=>setSelectedAssigned(t.id)}
+                <div key={t.id} className="at-row student-ticket-row" onClick={()=>setSelectedAssigned(t.id)}
                   style={{display:"flex",alignItems:"center",gap:0,
                     borderBottom:i<assignedTickets.length-1?"1px solid #1A1A1A":"none",
                     cursor:"pointer",background:"transparent",transition:"background 0.1s"}}>
@@ -1576,7 +1593,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                       {course&&<div style={{fontSize:10,color:course.color,fontWeight:600,marginTop:3}}>{course.icon} {course.id.toUpperCase()}</div>}
                     </div>
                     {/* Contact */}
-                    <div style={{width:160,padding:"14px 16px",flexShrink:0}}>
+                    <div className="student-ticket-meta" style={{width:160,padding:"14px 16px",flexShrink:0}}>
                       {requester ? (
                         <div style={{display:"flex",alignItems:"center",gap:7}}>
                           <div style={{width:24,height:24,borderRadius:5,background:`${orgColor}20`,border:`1px solid ${orgColor}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:orgColor,flexShrink:0}}>
@@ -1590,13 +1607,13 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                       ) : <span style={{color:"#2A2A2A",fontSize:12}}>—</span>}
                     </div>
                     {/* Priority */}
-                    <div style={{width:90,padding:"14px 16px",flexShrink:0}}>
+                    <div className="student-ticket-meta" style={{width:90,padding:"14px 16px",flexShrink:0}}>
                       <span style={{fontSize:10,fontWeight:700,color:railColor,background:railColor+"18",border:`1px solid ${railColor}40`,borderRadius:4,padding:"2px 8px",textTransform:"uppercase",letterSpacing:"0.06em"}}>{t.priority}</span>
                     </div>
                     {/* Status */}
                     <div style={{width:110,padding:"14px 16px",flexShrink:0}}>{badge(t.status,STATUS_COLOR[t.status])}</div>
                     {/* Age */}
-                    <div style={{width:80,padding:"14px 16px",fontSize:11,color:"#4A3828",flexShrink:0}}>{t.created_at?timeAgo(t.created_at):""}</div>
+                    <div className="student-ticket-meta" style={{width:80,padding:"14px 16px",fontSize:11,color:"#4A3828",flexShrink:0}}>{t.created_at?timeAgo(t.created_at):""}</div>
                   </div>
                 </div>
               );
@@ -2626,175 +2643,6 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
         })}
         {filtered.length===0 && <EmptyState msg="No scenarios match this filter." />}
       </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// FIELD JOURNAL  (replaces free-text LabNotes)
-// Mirrors the Ember Field Journal sections:
-//   1. Initial Hypothesis
-//   2. Troubleshooting Steps
-//   3. Resolution
-//   4. Connections
-// Content is stored as JSON in the lab_notes.content column.
-// ═══════════════════════════════════════════════════════════════
-const BLANK_JOURNAL = { hypothesis:"", steps:"", resolution:"", connections:"" };
-
-function FieldJournal({assignedTicketId, studentId, onSave}) {
-  const [journal,setJournal]=useState(BLANK_JOURNAL);
-  const [saved,setSaved]=useState(true);
-  const [loading,setLoading]=useState(true);
-
-  useEffect(()=>{
-    supabase.from("lab_notes").select("content")
-      .eq("assigned_ticket_id",assignedTicketId).eq("student_id",studentId)
-      .maybeSingle()
-      .then(({data})=>{
-        if(data?.content) {
-          try { setJournal({...BLANK_JOURNAL,...JSON.parse(data.content)}); }
-          catch { setJournal({...BLANK_JOURNAL, steps: data.content}); }
-        }
-        setLoading(false);
-      });
-  },[assignedTicketId,studentId]);
-
-  function update(field,val) { setJournal(j=>({...j,[field]:val})); setSaved(false); }
-
-  async function handleSave() {
-    await onSave(assignedTicketId, JSON.stringify(journal));
-    setSaved(true);
-  }
-
-  if(loading) return <div style={{color:"#6A5848",fontSize:13}}>Loading…</div>;
-
-  const ta = (field, placeholder, rows=4) => (
-    <textarea value={journal[field]} onChange={e=>update(field,e.target.value)} rows={rows}
-      style={{...inputStyle,resize:"vertical",lineHeight:1.7,fontFamily:"'JetBrains Mono',monospace",fontSize:12}}
-      placeholder={placeholder} />
-  );
-
-  return (
-    <div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-        <div style={{fontFamily:"'Raleway',sans-serif",fontSize:16,fontWeight:700,color:"#E8922E",letterSpacing:"-0.01em"}}>Ember Field Journal</div>
-        {!saved&&<span style={{fontSize:11,color:"#f59e0b"}}>Unsaved changes</span>}
-      </div>
-      <div style={{fontSize:12,color:"#6A5848",marginBottom:20,lineHeight:1.6}}>
-        Complete each section as you work through the ticket. This is your lab submission.
-      </div>
-
-      <div style={{display:"flex",flexDirection:"column",gap:20}}>
-        <div>
-          <SectionLabel>1 · Initial Hypothesis</SectionLabel>
-          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>Before you touch anything — what do you think is causing this issue and why?</div>
-          {ta("hypothesis","Based on the ticket, I believe the issue is…",4)}
-        </div>
-
-        <div>
-          <SectionLabel>2 · Troubleshooting Steps</SectionLabel>
-          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>Document each step: what you did, the tool or command used, and what you observed.</div>
-          {ta("steps","Step 1: [What I did] → [What I observed]\nStep 2: …",10)}
-        </div>
-
-        <div>
-          <SectionLabel>3 · Resolution</SectionLabel>
-          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>How did you resolve the issue? What was the root cause?</div>
-          {ta("resolution","The issue was resolved by… The root cause was…",4)}
-        </div>
-
-        <div>
-          <SectionLabel>4 · Connections</SectionLabel>
-          <div style={{fontSize:11,color:"#6A5848",marginBottom:8}}>What did this connect to from class? What would you do differently next time?</div>
-          {ta("connections","This connects to… Next time I would…",4)}
-        </div>
-      </div>
-
-      <button onClick={handleSave} disabled={saved}
-        style={{...btnPrimary,marginTop:20,opacity:saved?0.5:1,background:saved?"#166534":"#E8922E",color:"#F0EDE8"}}>
-        {saved?"Journal Saved ✓":"Save Journal"}
-      </button>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// MY LABS (student view)
-// ═══════════════════════════════════════════════════════════════
-function MyLabs({session, assignedTickets, onStatusChange, onSaveNote}) {
-  const [selected,setSelected]=useState(null);
-  const ticket=assignedTickets.find(t=>t.id===selected);
-
-  const statusOptions=ticket?[ticket.status,...(STATUS_TRANSITIONS[ticket.status]||[])]:[];
-
-  if(selected&&ticket) {
-    const course=courseById(ticket.course_id);
-    return (
-      <div style={{maxWidth:800}}>
-        <button onClick={()=>setSelected(null)} style={{...btnGhost,marginBottom:20}}>
-          ← Back to My Labs
-        </button>
-        <PageTitle title={ticket.title} sub={`${ticket.ticket_number} · ${ticket.lab_assignments?.week_label||`Week ${ticket.week}`}`} />
-        <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap"}}>
-          {badge(ticket.status,STATUS_COLOR[ticket.status])}
-          {badge(ticket.priority,PRIORITY_COLOR[ticket.priority])}
-          {course&&<span style={{fontSize:12,color:course.color}}>{course.icon} {course.label}</span>}
-          {ticket.group_tag&&badge("Group: "+ticket.group_tag,"#a78bfa")}
-        </div>
-
-        <Card style={{marginBottom:16}}>
-          <SectionLabel>Scenario</SectionLabel>
-          <div style={{color:"#B8A898",fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{ticket.description}</div>
-        </Card>
-
-        <Card style={{marginBottom:16}}>
-          <Field label="Update Status">
-            <select value={ticket.status}
-              onChange={e=>onStatusChange(ticket.id,e.target.value)}
-              style={inputStyle}>
-              {statusOptions.map(s=><option key={s} value={s}>{s}</option>)}
-            </select>
-          </Field>
-        </Card>
-
-        <Card>
-          <FieldJournal assignedTicketId={ticket.id} studentId={session.id} onSave={onSaveNote} />
-        </Card>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{maxWidth:800}}>
-      <PageTitle title="My Labs" sub={`${assignedTickets.length} lab(s) assigned to you`} />
-      {assignedTickets.length===0
-        ? <EmptyState msg="No labs assigned yet. Check back on lab day!" />
-        : <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            {assignedTickets.map(t=>{
-              const course=courseById(t.course_id);
-              const isOpen=t.status!=="Closed";
-              return (
-                <div key={t.id} onClick={()=>setSelected(t.id)}
-                  style={{background:"#1A1A1A",border:`1px solid ${isOpen?"#E8922E44":"#242424"}`,
-                    borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",
-                    alignItems:"center",gap:16}}
-                  onMouseEnter={e=>e.currentTarget.style.borderColor="#E8922E88"}
-                  onMouseLeave={e=>e.currentTarget.style.borderColor=isOpen?"#E8922E44":"#242424"}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:600,color:"#F0EDE8",marginBottom:6}}>{t.title}</div>
-                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                      {badge(t.status,STATUS_COLOR[t.status])}
-                      {badge(t.priority,PRIORITY_COLOR[t.priority])}
-                      {course&&<span style={{fontSize:11,color:course.color}}>{course.icon} {course.label}</span>}
-                      {t.group_tag&&<span style={{fontSize:11,color:"#a78bfa"}}>👥 {t.group_tag}</span>}
-                    </div>
-                  </div>
-                  <div style={{color:"#6A5848",fontSize:12,flexShrink:0}}>Open →</div>
-                </div>
-              );
-            })}
-          </div>
-      }
     </div>
   );
 }
