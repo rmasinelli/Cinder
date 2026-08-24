@@ -8,6 +8,10 @@ const migration = readFileSync(
 );
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const constants = readFileSync(new URL("../src/data/constants.js", import.meta.url), "utf8");
+const quarterHotfix = readFileSync(
+  new URL("../supabase/migrations/20260824192643_normalize_ticket_quarter_codes.sql", import.meta.url),
+  "utf8",
+);
 
 test("tickets receive stable classroom-readable identifiers", () => {
   assert.match(migration, /create sequence if not exists public\.assigned_ticket_number_seq/);
@@ -16,6 +20,8 @@ test("tickets receive stable classroom-readable identifiers", () => {
   assert.match(migration, /lpad\(nextval\('public\.assigned_ticket_number_seq'\)::text, 4, '0'\)/);
   assert.match(app, /at\.ticket_number\|\|at\.id\?\.slice/);
   assert.match(app, /ticket\.ticket_number/);
+  assert.match(quarterHotfix, /nullif\(trim\(classes\.quarter\), ''\)/);
+  assert.match(quarterHotfix, /ticket_number ~ '\^\[A-Z\]/);
 });
 
 test("the service-desk lifecycle is enforced in Postgres", () => {
