@@ -7,6 +7,7 @@ const expectedMigrations = [
   "20260824181523_authoritative_baseline.sql",
   "20260824181524_classroom_authorization.sql",
   "20260824181525_private_enrollment.sql",
+  "20260824185004_share_classroom_assignment_updates.sql",
 ];
 
 const baseline = readFileSync(
@@ -118,4 +119,20 @@ test("custom scenario metadata uses the schema's JSON column", () => {
 test("the app can target a clean local Supabase stack", () => {
   assert.match(supabaseClient, /import\.meta\.env\.VITE_SUPABASE_URL/);
   assert.match(supabaseClient, /import\.meta\.env\.VITE_SUPABASE_PUBLISHABLE_KEY/);
+});
+
+test("launch-visible classroom data is shared instead of browser-local", () => {
+  assert.doesNotMatch(app, /localStorage\.(?:getItem|setItem)\("hd:/);
+  assert.doesNotMatch(app, /label:"(?:Ticket Queue|Inbox|Incidents)"/);
+  assert.doesNotMatch(app, /view==="(?:submit|inbox|ir|ticket)"/);
+  assert.match(app, /label:"Assignment Queue"/);
+  assert.match(app, /\.from\("assigned_tickets"\)/);
+  assert.match(app, /postgres_changes[\s\S]*?table:"assigned_tickets"/);
+});
+
+test("browser storage is limited to safe device preferences", () => {
+  const storageKeys = [...app.matchAll(/localStorage\.(?:getItem|setItem)\((?:`([^`]+)`|"([^"]+)")/g)]
+    .map(match=>match[1]||match[2]);
+  assert.ok(storageKeys.length > 0);
+  assert.ok(storageKeys.every(key=>key.startsWith("cinder:onboarded:")||key==="cinder:codes"));
 });

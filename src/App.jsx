@@ -6,10 +6,6 @@ import { CLIENTS } from "./data/clients.js";
 import { PERSON_BY_ID, ORG_COLOR } from "./data/people.js";
 import { SCENARIOS } from "./data/scenarios.js";
 import {
-  SEED_USERS, SEED_TICKETS, SEED_KB, SEED_INCIDENTS,
-  SEED_NOTIFS, SEED_ACTIVE_LABS,
-} from "./data/seeds.js";
-import {
   PRIORITIES, STATUSES,
   PRIORITY_COLOR, STATUS_COLOR, ROLE_COLOR,
   SLA, IR_PHASES, IR_SEVERITIES, IR_SEVERITY_COLOR, IR_PHASE_COLOR,
@@ -147,29 +143,11 @@ function Toast({msg,type}){return(<div style={{position:"fixed",bottom:24,right:
 
 
 // ═══════════════════════════════════════════════════════════════
-// STORAGE
-// ═══════════════════════════════════════════════════════════════
-async function load(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
-async function save(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
-}
-
-// ═══════════════════════════════════════════════════════════════
 // APP ROOT
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
   const [ready,setReady]           = useState(false);
-  const [users,setUsers]           = useState([]);
-  const [tickets,setTickets]       = useState([]);
-  const [notifs,setNotifs]         = useState([]);
-  const [activeLabs,setActiveLabs] = useState({});
   const [kb,setKb]                 = useState([]);
-  const [incidents,setIncidents]   = useState([]);
   const [session,setSession]       = useState(null);
   const [view,setView]             = useState("dashboard");
   const [selected,setSelected]     = useState(null);
@@ -179,6 +157,20 @@ export default function App() {
   const [customScenarios,setCustomScenarios] = useState([]);
   const [showOnboarding,setShowOnboarding]   = useState(false);
   const [deepAssigned,setDeepAssigned]       = useState(null); // assigned ticket id to auto-open in MyTickets
+
+  const refreshAssignedTickets = useCallback(async currentSession => {
+    if (!currentSession) return;
+    let query = supabase.from("assigned_tickets")
+      .select("*, lab_assignments(week_label, assigned_at, class_id)")
+      .order("created_at",{ascending:false});
+    if (currentSession.role !== "admin") query = query.eq("student_id",currentSession.id);
+    const {data,error} = await query;
+    if (error) {
+      console.error("assigned ticket load error:",error);
+      return;
+    }
+    setAssignedTickets(data||[]);
+  },[]);
 
   // ── Load profile from Supabase after auth ──────────────────────
   const loadProfile = useCallback(async (userId) => {
@@ -213,15 +205,7 @@ export default function App() {
   }, []);
 
   useEffect(()=>{
-    // Load app data (localStorage for now; Supabase migration in next phase)
     (async()=>{
-      const u=await load("hd:users",SEED_USERS);
-      const t=await load("hd:tickets",SEED_TICKETS);
-      const n=await load("hd:notifs",SEED_NOTIFS);
-      const al=await load("hd:activeLabs",SEED_ACTIVE_LABS);
-      const inc=await load("hd:incidents",SEED_INCIDENTS);
-      setUsers(u); setTickets(t); setNotifs(n); setActiveLabs(al); setKb(SEED_KB); setIncidents(inc);
-
       // Restore Supabase session if one exists
       const { data: { session: authSession } } = await supabase.auth.getSession();
       if (authSession) await loadProfile(authSession.user.id);
@@ -241,17 +225,6 @@ export default function App() {
   },[loadProfile]);
 
   function showToast(msg,type="success") { setToast({msg,type}); setTimeout(()=>setToast(null),3500); }
-
-  async function persistTickets(next) { setTickets(next); await save("hd:tickets",next); }
-  async function persistUsers(next)   { setUsers(next);   await save("hd:users",next); }
-  async function persistNotifs(next)  { setNotifs(next);  await save("hd:notifs",next); }
-  async function persistLabs(next)    { setActiveLabs(next); await save("hd:activeLabs",next); }
-  async function persistIncidents(next){ setIncidents(next); await save("hd:incidents",next); }
-
-  async function addNotifs(batch) {
-    const next=[...batch,...notifs].slice(0,300);
-    await persistNotifs(next);
-  }
 
   async function logout() {
     await supabase.auth.signOut();
@@ -301,13 +274,20 @@ export default function App() {
       });
       supabase.from("ticket_templates").select("*").order("course_id").order("week")
         .then(({data})=>{ if(data) setCustomScenarios(data.map(fromTicketTemplateRow)); });
-    } else {
-      supabase.from("assigned_tickets")
-        .select("*, lab_assignments(week_label, assigned_at)")
-        .eq("student_id", session.id).order("created_at",{ascending:false})
-        .then(({data})=>{ if(data) setAssignedTickets(data); });
     }
-  },[session]);
+
+    refreshAssignedTickets(session);
+    const refresh = () => refreshAssignedTickets(session);
+    const channel = supabase.channel(`classroom-assignments:${session.id}`)
+      .on("postgres_changes",{event:"*",schema:"public",table:"assigned_tickets"},refresh)
+      .on("postgres_changes",{event:"*",schema:"public",table:"lab_notes"},refresh)
+      .subscribe();
+    window.addEventListener("focus",refresh);
+    return ()=>{
+      window.removeEventListener("focus",refresh);
+      supabase.removeChannel(channel);
+    };
+  },[session,refreshAssignedTickets]);
 
   async function saveCustomScenario(scenario) {
     if (scenario.id) {
@@ -405,18 +385,6 @@ export default function App() {
     setAssignedTickets(prev=>prev.map(t=>t.id===ticketId?{...t,status}:t));
   }
 
-  const myUnread = session ? notifs.filter(n=>n.toId===session.id&&!n.read).length : 0;
-
-  // Active lab ticket for this student this week
-  function getMyLabTicket(courseId, week) {
-    const key = `${courseId}-${week}`;
-    const lab = activeLabs[key];
-    if (!lab) return null;
-    const assigneeTicketId = lab.assignees?.[session?.id];
-    if (!assigneeTicketId) return null;
-    return tickets.find(t=>t.id===assigneeTicketId) || null;
-  }
-
   if(!ready) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0D0D0D",gap:14}}>
       <GlobalStyles />
@@ -434,63 +402,29 @@ export default function App() {
   }
 
   return (
-    <Shell session={session} onLogout={logout} view={view} setView={setView} unread={myUnread}>
+    <Shell session={session} onLogout={logout} view={view} setView={setView} unread={0}>
       {showOnboarding && <OnboardingModal onDone={dismissOnboarding} />}
       {toast && <Toast msg={toast.msg} type={toast.type} />}
 
       {view==="dashboard" && (
-        <Dashboard session={session} tickets={tickets} users={users} activeLabs={activeLabs}
+        <Dashboard session={session} tickets={[]} users={classStudents} activeLabs={{}}
           assignedTickets={assignedTickets}
-          getMyLabTicket={getMyLabTicket}
-          onOpen={id=>{setSelected(id);setView("ticket");}}
-          onOpenAssigned={id=>{setDeepAssigned(id);setView("my-tickets");}} />
-      )}
-      {view==="submit" && (
-        <SubmitTicket session={session} courses={COURSES}
-          onSubmit={async(t)=>{
-            const ticket={...t,id:nextId(tickets),created:new Date().toISOString(),notes:[],assignedTo:null,labScenarioId:null,week:null};
-            const nextT=[ticket,...tickets];
-            await persistTickets(nextT);
-            const notifBatch=users.filter(u=>u.role==="tech"||u.role==="admin")
-              .map(u=>makeNotif(u.id,`[${ticket.id}] New ticket: ${ticket.title}`,
-                `Priority: ${ticket.priority}\nCourse: ${courseById(ticket.courseId)?.label||"General"}`,ticket.id));
-            await addNotifs(notifBatch);
-            showToast("Ticket submitted!"); setView("my-tickets");
-          }}
-          onBack={()=>setView("my-tickets")} />
+          onOpenAssigned={id=>{
+            if(session.role==="admin") setView("queue");
+            else { setDeepAssigned(id); setView("my-tickets"); }
+          }} />
       )}
       {view==="my-tickets" && (
-        <MyTickets session={session} tickets={tickets} users={users}
+        <MyTickets session={session} tickets={[]} users={classStudents}
           assignedTickets={assignedTickets}
           initialAssigned={deepAssigned}
           onConsumeInitial={()=>setDeepAssigned(null)}
           onSaveNote={saveLabNote}
           onStatusChange={updateAssignedTicketStatus}
-          onOpen={id=>{setSelected(id);setView("ticket");}}
-          onNewTicket={()=>setView("submit")} />
+          onOpen={()=>{}} />
       )}
-      {view==="queue" && (session.role==="tech"||session.role==="admin") && (
-        <Queue session={session} tickets={tickets} users={users}
-          onOpen={id=>{setSelected(id);setView("ticket");}} />
-      )}
-      {view==="ticket" && selected && (
-        <TicketDetail
-          ticket={tickets.find(t=>t.id===selected)}
-          session={session} users={users}
-          onUpdate={async(updated,notifBatch)=>{
-            const next=tickets.map(t=>t.id===updated.id?updated:t);
-            await persistTickets(next);
-            if(notifBatch?.length) await addNotifs(notifBatch);
-            showToast("Ticket updated.");
-          }}
-          onBack={()=>setView(session.role==="student"?"my-tickets":"queue")}
-        />
-      )}
-      {view==="inbox" && (
-        <Inbox session={session} notifs={notifs} tickets={tickets}
-          onRead={async(id)=>{ const n=notifs.map(x=>x.id===id?{...x,read:true}:x); await persistNotifs(n); setNotifs(n); }}
-          onReadAll={async()=>{ const n=notifs.map(x=>x.toId===session.id?{...x,read:true}:x); await persistNotifs(n); setNotifs(n); }}
-          onOpen={id=>{setSelected(id);setView("ticket");}} />
+      {view==="queue" && session.role==="admin" && (
+        <AssignmentQueue tickets={assignedTickets} students={classStudents} />
       )}
       {view==="labs" && session.role==="admin" && (
         <LabsHub
@@ -504,8 +438,6 @@ export default function App() {
       )}
       {view==="admin" && session.role==="admin" && (
         <AdminPanel session={session} classStudents={classStudents}
-          tickets={tickets}
-          onSaveTickets={persistTickets}
           onResetAssigned={()=>setAssignedTickets([])}
           onRotateClassCode={rotateClassCode}
           showToast={showToast} />
@@ -547,16 +479,6 @@ export default function App() {
               return false;
             }
           }}
-        />
-      )}
-      {view==="ir" && (
-        <IncidentResponse session={session} incidents={incidents} tickets={tickets} users={users}
-          onSave={async(inc)=>{
-            const exists=incidents.find(i=>i.id===inc.id);
-            const next=exists?incidents.map(i=>i.id===inc.id?inc:i):[inc,...incidents];
-            await persistIncidents(next); showToast("Incident updated.");
-          }}
-          onDelete={async(id)=>{ await persistIncidents(incidents.filter(i=>i.id!==id)); showToast("Incident deleted."); }}
         />
       )}
     </Shell>
@@ -864,12 +786,10 @@ function Shell({session,onLogout,view,setView,unread,children}) {
 
   const navItems=[
     {id:"dashboard",  label:"Dashboard",    roles:["student","tech","admin"], icon:"⊞"},
-    {id:"my-tickets", label:"My Tickets",   roles:["student","tech","admin"], icon:"≡"},
-    {id:"queue",      label:"Ticket Queue", roles:["tech","admin"],           icon:"▤"},
+    {id:"my-tickets", label:"My Tickets",   roles:["student"],                icon:"≡"},
+    {id:"queue",      label:"Assignment Queue", roles:["admin"],                icon:"▤"},
     {id:"kb",         label:"Knowledge Base",roles:["student","tech","admin"],icon:"📖"},
-    {id:"ir",         label:"Incidents",    roles:["student","tech","admin"], icon:"🚨", courses:["cyber"]},
     {id:"labs",       label:"Labs",         roles:["admin"],                  icon:"🔬"},
-    {id:"inbox",      label:"Inbox",        roles:["student","tech","admin"], icon:"✉"},
     {id:"admin",      label:"Admin Panel",  roles:["admin"],                  icon:"⚙"},
   ].filter(n=>n.roles.includes(session.role) && (!n.courses||n.courses.some(c=>enrolledCourseIds.includes(c))));
 
@@ -946,26 +866,14 @@ function Shell({session,onLogout,view,setView,unread,children}) {
 // ═══════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════
-function Dashboard({session,tickets,users,activeLabs,assignedTickets,getMyLabTicket,onOpen,onOpenAssigned}) {
-  const myTickets = session.role==="student"
-    ? tickets.filter(t=>t.submittedBy===session.id)
-    : tickets;
-
-  // For students, include assigned tickets in stats
+function Dashboard({session,tickets,users,activeLabs,assignedTickets,onOpenAssigned}) {
   const at = assignedTickets || [];
-  const stats = session.role==="student"
-    ? {
-        open:       myTickets.filter(t=>t.status==="Open").length       + at.filter(t=>t.status==="Open").length,
-        inProgress: myTickets.filter(t=>t.status==="In Progress").length + at.filter(t=>t.status==="In Progress").length,
-        resolved:   myTickets.filter(t=>["Resolved","Closed"].includes(t.status)).length + at.filter(t=>["Resolved","Closed"].includes(t.status)).length,
-        breached:   myTickets.filter(t=>t.priority&&slaInfo(t.created,t.priority,t.status)?.breached).length,
-      }
-    : {
-        open:      myTickets.filter(t=>t.status==="Open").length,
-        inProgress:myTickets.filter(t=>t.status==="In Progress").length,
-        resolved:  myTickets.filter(t=>["Resolved","Closed"].includes(t.status)).length,
-        breached:  myTickets.filter(t=>t.priority&&slaInfo(t.created,t.priority,t.status)?.breached).length,
-      };
+  const stats = {
+    open:at.filter(t=>t.status==="Open").length,
+    inProgress:at.filter(t=>t.status==="In Progress").length,
+    resolved:at.filter(t=>["Resolved","Closed"].includes(t.status)).length,
+    breached:at.filter(t=>t.priority&&slaInfo(t.created_at,t.priority,t.status)?.breached).length,
+  };
 
   // For students, merge assigned tickets into recent (shape them to match localStorage tickets)
   const assignedAsTickets = at.map(t=>({
@@ -973,8 +881,7 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,getMyLabTic
     priority:t.priority, courseId:t.course_id, created:t.created_at||t.created,
     submittedBy:session.id, assignedTo:null, notes:[], _isAssigned:true,
   }));
-  const allMine = session.role==="student" ? [...myTickets,...assignedAsTickets] : myTickets;
-  const recent=[...allMine].sort((a,b)=>new Date(b.created)-new Date(a.created)).slice(0,5);
+  const recent=[...assignedAsTickets].sort((a,b)=>new Date(b.created)-new Date(a.created)).slice(0,5);
 
   return (
     <div>
@@ -1032,9 +939,9 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,getMyLabTic
           <SectionLabel>Course Overview</SectionLabel>
           <div className="course-grid">
             {COURSES.map(c=>{
-              const cTickets=tickets.filter(t=>t.courseId===c.id);
+              const cTickets=at.filter(t=>t.course_id===c.id);
               const open=cTickets.filter(t=>t.status==="Open").length;
-              const active=Object.keys(activeLabs).filter(k=>k.startsWith(c.id)).length;
+              const active=cTickets.filter(t=>!["Resolved","Closed"].includes(t.status)).length;
               return (
                 <div key={c.id} style={{background:"#1A1A1A",border:`1px solid ${c.color}33`,borderRadius:12,padding:"18px 22px"}}>
                   <div style={{fontSize:11,color:c.color,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>{c.icon} {c.label}</div>
@@ -1049,7 +956,7 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,getMyLabTic
 
       <SectionLabel>Recent Tickets</SectionLabel>
       <TicketTable tickets={recent} users={users} session={session}
-        onOpen={id=>{ const t=recent.find(r=>r.id===id); t?._isAssigned ? onOpenAssigned(id) : onOpen(id); }}
+        onOpen={onOpenAssigned}
         showSLA showCourse />
     </div>
   );
@@ -1136,7 +1043,7 @@ function SubmitTicket({session,courses,onSubmit,onBack}) {
 // ═══════════════════════════════════════════════════════════════
 // MY TICKETS
 // ═══════════════════════════════════════════════════════════════
-function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onStatusChange,onNewTicket}) {
+function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onStatusChange}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
@@ -1340,7 +1247,6 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
     <div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
         <PageTitle title="My Tickets" sub={`${total} ticket${total!==1?"s":""}`} />
-        <button onClick={onNewTicket} style={{...btnPrimary,width:"auto",padding:"9px 20px"}}>+ New Ticket</button>
       </div>
 
       {/* Assigned tickets — same row style as TicketTable */}
@@ -1417,6 +1323,49 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
 // ═══════════════════════════════════════════════════════════════
 // QUEUE
 // ═══════════════════════════════════════════════════════════════
+function AssignmentQueue({tickets,students}) {
+  const [statusFilter,setStatusFilter]=useState("All");
+  const visible=tickets.filter(t=>statusFilter==="All"||t.status===statusFilter);
+  const studentName=id=>students.find(student=>student.id===id)?.alias||"Unknown student";
+
+  return (
+    <div>
+      <PageTitle title="Assignment Queue" sub="Shared Supabase assignments — changes made by students appear here across devices." />
+      <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+        {["All","Open","In Progress","Resolved","Closed"].map(status=>(
+          <button key={status} onClick={()=>setStatusFilter(status)}
+            style={{padding:"6px 14px",borderRadius:6,fontSize:12,
+              background:statusFilter===status?"#E8922E":"#1A1A1A",
+              color:statusFilter===status?"#0D0D0D":"#B8A898",
+              border:`1px solid ${statusFilter===status?"#E8922E":"#242424"}`,
+              fontWeight:statusFilter===status?700:400}}>
+            {status}
+          </button>
+        ))}
+      </div>
+      {visible.length===0?<EmptyState msg="No shared assignments in this view."/>:(
+        <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+          {visible.map((ticket,index)=>{
+            const course=courseById(ticket.course_id);
+            return (
+              <div key={ticket.id} style={{display:"grid",gridTemplateColumns:"minmax(180px,1.5fr) minmax(120px,1fr) 110px 130px",gap:16,
+                padding:"14px 18px",alignItems:"center",borderBottom:index<visible.length-1?"1px solid #1E1E1E":"none"}}>
+                <div>
+                  <div style={{fontSize:13,color:"#EDE9E3",fontWeight:600}}>{ticket.title.replace(/^\[W\d+\] /,"")}</div>
+                  <div style={{fontSize:10,color:course?.color||"#6A5848",marginTop:3}}>{course?.label||ticket.course_id?.toUpperCase()||"General"}</div>
+                </div>
+                <div style={{fontSize:12,color:"#B8A898",fontFamily:"monospace"}}>{studentName(ticket.student_id)}</div>
+                <div>{badge(ticket.priority,PRIORITY_COLOR[ticket.priority])}</div>
+                <div>{badge(ticket.status,STATUS_COLOR[ticket.status])}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Queue({session,tickets,users,onOpen}) {
   const [filter,setFilter]=useState("Open");
   const [courseFilter,setCourseFilter]=useState("all");
@@ -2538,7 +2487,7 @@ function Inbox({session,notifs,onRead,onReadAll,onOpen}) {
   );
 }
 
-function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssigned, onRotateClassCode, showToast}) {
+function AdminPanel({session, classStudents, onResetAssigned, onRotateClassCode, showToast}) {
   const allClasses = session.classes || [];
   const [search,   setSearch]   = useState("");
   const [filterQ,  setFilterQ]  = useState(""); // quarter filter
@@ -2702,14 +2651,13 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
           <SectionLabel>Danger Zone</SectionLabel>
           <div style={{background:"#0D0D0D",border:"1px solid #7f1d1d44",borderRadius:8,padding:16,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div>
-              <div style={{color:"#fca5a5",fontSize:13,fontWeight:600}}>Reset Ticket Data</div>
-              <div style={{color:"#6A5848",fontSize:12}}>Reloads seed tickets · clears all assigned tickets · clears all lab notes.</div>
+              <div style={{color:"#fca5a5",fontSize:13,fontWeight:600}}>Reset Shared Assignment Data</div>
+              <div style={{color:"#6A5848",fontSize:12}}>Clears all assigned tickets and graded lab notes from Supabase.</div>
             </div>
             <button onClick={async()=>{
               if(!window.confirm("This will delete ALL assigned tickets and lab notes for every student. This cannot be undone. Continue?")) return;
               const { error } = await supabase.rpc("admin_reset_assigned_tickets");
               if(error) { showToast("Reset failed: "+error.message,"error"); return; }
-              await onSaveTickets(SEED_TICKETS);
               onResetAssigned?.();
               showToast("All assigned tickets cleared. Students will see an empty queue.");
             }}
