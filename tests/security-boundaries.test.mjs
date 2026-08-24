@@ -14,6 +14,9 @@ const migration = readFileSync(
 test("student writes use narrow server-side RPCs", () => {
   for (const rpc of [
     "complete_student_enrollment",
+    "validate_enrollment_codes",
+    "resolve_student_login",
+    "get_my_classes",
     "update_my_assigned_ticket_status",
     "save_my_lab_note",
   ]) {
@@ -24,6 +27,34 @@ test("student writes use narrow server-side RPCs", () => {
   assert.doesNotMatch(app, /from\("profile_classes"\)\s*\.insert\(/);
   assert.doesNotMatch(app, /from\("assigned_tickets"\)\s*\.update\(/);
   assert.doesNotMatch(app, /from\("lab_notes"\)\s*\.(?:insert|update|upsert)\(/);
+});
+
+test("class codes are reachable only through controlled enrollment RPCs", () => {
+  assert.equal((app.match(/from\("classes"\)/g) || []).length, 1);
+  assert.doesNotMatch(app, /from\("classes"\)[\s\S]{0,120}\.ilike\("code"/);
+
+  const enrollmentMigration = readFileSync(
+    new URL(
+      "../supabase/migrations/20260824180128_private_enrollment_codes.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(enrollmentMigration, /revoke select on table public\.classes from anon/);
+  assert.match(enrollmentMigration, /create policy "classes: admin read"/);
+  assert.doesNotMatch(enrollmentMigration, /create policy "classes: read for enrollment"/);
+  assert.match(enrollmentMigration, /drop function if exists public\.complete_student_enrollment\(text, uuid, uuid\[\]\)/);
+
+  for (const rpc of [
+    "validate_enrollment_codes",
+    "resolve_student_login",
+    "complete_student_enrollment",
+    "add_my_class_by_code",
+    "rotate_class_enrollment_code",
+  ]) {
+    assert.match(enrollmentMigration, new RegExp(`(?:create or replace|create) function public\\.${rpc}`));
+  }
 });
 
 test("all classroom tables explicitly enable RLS", () => {

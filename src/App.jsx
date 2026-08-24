@@ -183,17 +183,15 @@ export default function App() {
   // ── Load profile from Supabase after auth ──────────────────────
   const loadProfile = useCallback(async (userId) => {
     const [profileRes, membershipRes] = await Promise.all([
-      supabase.from("profiles").select("*, classes!profiles_class_id_fkey(name, code, course_id)").eq("id", userId).single(),
-      supabase.from("profile_classes").select("class_id, classes(id, name, code, course_id)").eq("profile_id", userId),
+      supabase.from("profiles").select("*").eq("id", userId).single(),
+      supabase.rpc("get_my_classes"),
     ]);
     const { data: profile, error } = profileRes;
-    const memberships = membershipRes.data;
-    if (membershipRes.error) console.warn("profile_classes load error:", membershipRes.error);
+    const enrolledClasses = membershipRes.data || [];
+    if (membershipRes.error) console.warn("class membership load error:", membershipRes.error);
     if (error) { console.error("loadProfile error:", error); return null; }
     if (profile) {
-      const enrolledClasses = (memberships||[]).length > 0
-        ? (memberships||[]).map(m=>m.classes).filter(Boolean)
-        : profile.classes ? [profile.classes] : [];
+      const primaryClass = enrolledClasses.find(c=>c.id===profile.class_id) || enrolledClasses[0];
       setSession({
         id: profile.id,
         name: profile.alias,
@@ -202,8 +200,7 @@ export default function App() {
         // real classes they're enrolled in, not a static cohort label.
         courseIds: [...new Set(enrolledClasses.map(c=>c.course_id).filter(Boolean))],
         class_id: profile.class_id,
-        className: profile.classes?.name || "",
-        classCode: profile.classes?.code || "",
+        className: primaryClass?.name || "",
         classes: enrolledClasses,
       });
       setView("dashboard");
@@ -276,7 +273,7 @@ export default function App() {
     if (session.role === "admin") {
       // Admins see ALL classes and ALL students
       Promise.all([
-        supabase.from("classes").select("id,name,code,course_id"),
+        supabase.from("classes").select("id,name,code,course_id,quarter,year,enrollment_open,code_expires_at"),
         supabase.from("profile_classes").select("profile_id, class_id, profiles(id,alias,role,cohort,class_id)"),
         supabase.from("profiles").select("id,alias,role,cohort,class_id").not("class_id","is",null),
       ]).then(([classesRes, junctionRes, legacyRes]) => {
@@ -332,6 +329,24 @@ export default function App() {
     if (error) { showToast("Delete failed: "+error.message,"error"); return; }
     setCustomScenarios(prev=>prev.filter(s=>s.id!==id));
     showToast("Scenario deleted.");
+  }
+
+  async function rotateClassCode(classId, newCode) {
+    const {error} = await supabase.rpc("rotate_class_enrollment_code", {
+      p_class_id: classId,
+      p_new_code: newCode,
+      p_expires_at: null,
+      p_enrollment_open: true,
+    });
+    if (error) { showToast("Code rotation failed: "+error.message,"error"); return false; }
+    setSession(current=>current ? ({
+      ...current,
+      classes:(current.classes||[]).map(cls=>cls.id===classId
+        ? {...cls,code:newCode.toUpperCase(),enrollment_open:true,code_expires_at:null}
+        : cls),
+    }) : current);
+    showToast("Enrollment code rotated. Existing student accounts still work.");
+    return true;
   }
 
   async function importScenarios(rows) {
@@ -492,6 +507,7 @@ export default function App() {
           tickets={tickets}
           onSaveTickets={persistTickets}
           onResetAssigned={()=>setAssignedTickets([])}
+          onRotateClassCode={rotateClassCode}
           showToast={showToast} />
       )}
       {view==="kb" && (
@@ -610,8 +626,9 @@ function Login({ onSignIn }) {
     else if (tab === "signin") setClassCode("");
   }
 
-  function makeEmail(a, c) {
-    return `${a.toLowerCase().replace(/\s+/g,"_")}@${c.toLowerCase().replace(/\s+/g,"_")}.cinder.io`;
+  function makeEmail(a, loginKey) {
+    const loginAlias = a.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
+    return `${loginAlias}@${loginKey}.cinder.io`;
   }
 
   const codeKnown = !!getStoredCodes()[alias.toLowerCase().trim()];
@@ -621,9 +638,13 @@ function Login({ onSignIn }) {
     if (!alias.trim() || !pass) { setErr("Alias and password required."); setLoading(false); return; }
     const code = classCode.trim();
     if (!code) { setErr("Enter your class code."); setLoading(false); return; }
-    const email = makeEmail(alias.trim(), code);
+    const {data:email,error:resolveErr} = await supabase.rpc("resolve_student_login", {
+      p_alias: alias.trim(),
+      p_class_code: code,
+    });
+    if (resolveErr || !email) { setErr("Invalid alias, class code, or password."); setLoading(false); return; }
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-    if (error) { setErr("Invalid alias or password. Check your class code is correct."); setLoading(false); return; }
+    if (error) { setErr("Invalid alias, class code, or password."); setLoading(false); return; }
     saveCode(alias.trim(), code);
     const profile = await onSignIn(data.user.id);
     if (!profile) setErr("Account found but profile missing — contact your instructor.");
@@ -637,21 +658,15 @@ function Login({ onSignIn }) {
     if (pass !== confirm) { setErr("Passwords do not match."); setLoading(false); return; }
     if (pass.length < 6)  { setErr("Password must be at least 6 characters."); setLoading(false); return; }
 
-    // Validate all class codes
-    const classResults = await Promise.all(allCodes.map(code=>
-      supabase.from("classes").select("id, name, code").ilike("code", code).single()
-    ));
-    const badCode = classResults.findIndex(r=>r.error||!r.data);
-    if (badCode>=0) { setErr(`Class code "${allCodes[badCode]}" not found. Check with your instructor.`); setLoading(false); return; }
-    const classes = classResults.map(r=>r.data);
+    // Exact-code validation returns only sanitized metadata when every code is
+    // open and unexpired. It never exposes the classes table or partial matches.
+    const {data:classes,error:codeErr} = await supabase.rpc("validate_enrollment_codes", {
+      p_codes: allCodes,
+    });
+    if (codeErr || !classes?.length) { setErr("One or more class codes are invalid or unavailable."); setLoading(false); return; }
     const primaryClass = classes[0];
 
-    // Check alias not already taken in primary class
-    const { data: existing } = await supabase.from("profiles").select("id")
-      .eq("alias", alias.trim()).eq("class_id", primaryClass.id).maybeSingle();
-    if (existing) { setErr("That alias is already taken in this class. Choose another."); setLoading(false); return; }
-
-    const email = makeEmail(alias.trim(), allCodes[0]);
+    const email = makeEmail(alias.trim(), primaryClass.login_key);
     const { data, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
     if (signUpErr) { setErr(signUpErr.message); setLoading(false); return; }
 
@@ -659,8 +674,7 @@ function Login({ onSignIn }) {
     // values are derived inside the database rather than accepted from the UI.
     const { error: enrollmentErr } = await supabase.rpc("complete_student_enrollment", {
       p_alias: alias.trim(),
-      p_primary_class_id: primaryClass.id,
-      p_class_ids: classes.map(c=>c.id),
+      p_class_codes: allCodes,
     });
     if (enrollmentErr) { setErr("Account created but enrollment failed. Contact your instructor."); setLoading(false); return; }
 
@@ -705,8 +719,6 @@ function Login({ onSignIn }) {
       setTimeout(()=>{ setTab("signin"); setOk(""); }, 2000);
     } else if (data === "invalid_credentials") {
       setErr("Alias, class code, or PIN is incorrect.");
-    } else if (data === "invalid_class") {
-      setErr("Class code not found.");
     } else if (data === "password_too_short") {
       setErr("Password must be at least 6 characters.");
     } else {
@@ -2518,7 +2530,7 @@ function Inbox({session,notifs,onRead,onReadAll,onOpen}) {
   );
 }
 
-function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssigned, showToast}) {
+function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssigned, onRotateClassCode, showToast}) {
   const allClasses = session.classes || [];
   const [search,   setSearch]   = useState("");
   const [filterQ,  setFilterQ]  = useState(""); // quarter filter
@@ -2614,7 +2626,21 @@ function AdminPanel({session, classStudents, tickets, onSaveTickets, onResetAssi
                     {cls.quarter   && <span style={{color:"#8A7868"}}>{cls.quarter} {cls.year||""}</span>}
                   </div>
                 </div>
-                <div style={{fontSize:12,color:"#6A5848",flexShrink:0}}>{students.length} student{students.length!==1?"s":""}</div>
+                <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                  <div style={{fontSize:12,color:"#6A5848"}}>{students.length} student{students.length!==1?"s":""}</div>
+                  <button onClick={async()=>{
+                    const next=window.prompt("Enter a new enrollment code (8–64 letters, numbers, or hyphens). Existing enrolled accounts will keep working.");
+                    if(next===null) return;
+                    const normalized=next.trim().toUpperCase();
+                    if(!/^[A-Z0-9][A-Z0-9-]{7,63}$/.test(normalized)) {
+                      showToast("Use 8–64 letters, numbers, or hyphens.","error"); return;
+                    }
+                    await onRotateClassCode(cls.id,normalized);
+                  }}
+                    style={{background:"none",border:"1px solid #2E2E2E",color:"#8A7868",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer"}}>
+                    Rotate Code
+                  </button>
+                </div>
               </div>
 
               {students.length === 0
