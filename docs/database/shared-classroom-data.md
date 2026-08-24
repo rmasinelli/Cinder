@@ -11,6 +11,7 @@ that students or instructors can see.
 | Lab scenarios | built-in versioned scenarios plus shared `ticket_templates` |
 | Pushed lab work | `lab_assignments`, `assigned_tickets` |
 | Student status changes | `update_my_assigned_ticket_status` RPC |
+| Ticket identity and lifecycle audit | `assigned_tickets.ticket_number`, `ticket_status_history` |
 | Graded lab documentation | `lab_notes` through `save_my_lab_note` |
 | Instructor assignment queue | RLS-protected `assigned_tickets` reads |
 | Knowledge base | `knowledge_articles`, `knowledge_article_revisions` |

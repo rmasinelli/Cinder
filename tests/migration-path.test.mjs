@@ -8,6 +8,7 @@ const expectedMigrations = [
   "20260824181524_classroom_authorization.sql",
   "20260824181525_private_enrollment.sql",
   "20260824185004_share_classroom_assignment_updates.sql",
+  "20260824191422_classroom_ticket_lifecycle.sql",
 ];
 
 const baseline = readFileSync(

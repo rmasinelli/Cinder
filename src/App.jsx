@@ -7,7 +7,7 @@ import { CLIENTS } from "./data/clients.js";
 import { PERSON_BY_ID, ORG_COLOR } from "./data/people.js";
 import { SCENARIOS } from "./data/scenarios.js";
 import {
-  PRIORITIES, STATUSES,
+  PRIORITIES, STATUSES, STATUS_TRANSITIONS,
   PRIORITY_COLOR, STATUS_COLOR, ROLE_COLOR,
   SLA, IR_PHASES, IR_SEVERITIES, IR_SEVERITY_COLOR, IR_PHASE_COLOR,
   KB_CATEGORIES,
@@ -354,13 +354,13 @@ export default function App() {
           const tag=`W${week}-pair${Math.floor(i/2)+1}`;
           acc.push({assignment_id:assignment.id,student_id:sid,scenario_id:scenarioId,
             course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-            description:scenario.description,priority:scenario.priority,status:"Open",group_tag:tag});
+            description:scenario.description,priority:scenario.priority,status:"New",group_tag:tag});
           return acc;
         },[])
       : studentIds.map(sid=>({
           assignment_id:assignment.id,student_id:sid,scenario_id:scenarioId,
           course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-          description:scenario.description,priority:scenario.priority,status:"Open",group_tag:null,
+          description:scenario.description,priority:scenario.priority,status:"New",group_tag:null,
         }));
 
     const {error:rowsErr} = await supabase.from("assigned_tickets").insert(rows);
@@ -875,15 +875,17 @@ function Shell({session,onLogout,view,setView,unread,children}) {
 function Dashboard({session,tickets,users,activeLabs,assignedTickets,onOpenAssigned}) {
   const at = assignedTickets || [];
   const stats = {
-    open:at.filter(t=>t.status==="Open").length,
+    new:at.filter(t=>["New","Triage"].includes(t.status)).length,
     inProgress:at.filter(t=>t.status==="In Progress").length,
-    resolved:at.filter(t=>["Resolved","Closed"].includes(t.status)).length,
+    verification:at.filter(t=>t.status==="Verification").length,
+    closed:at.filter(t=>t.status==="Closed").length,
     breached:at.filter(t=>t.priority&&slaInfo(t.created_at,t.priority,t.status)?.breached).length,
   };
 
   // For students, merge assigned tickets into recent (shape them to match localStorage tickets)
   const assignedAsTickets = at.map(t=>({
     id:t.id, title:t.title.replace(/^\[W\d+\] /,""), status:t.status,
+    ticketNumber:t.ticket_number,
     priority:t.priority, courseId:t.course_id, created:t.created_at||t.created,
     submittedBy:session.id, assignedTo:null, notes:[], _isAssigned:true,
   }));
@@ -900,7 +902,7 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,onOpenAssig
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {at.map(t=>{
               const course=courseById(t.course_id);
-              const isOpen=!["Resolved","Closed"].includes(t.status);
+              const isOpen=t.status!=="Closed";
               return (
                 <div key={t.id} onClick={()=>onOpenAssigned(t.id)}
                   style={{background:"#0D0D0D",border:`1px solid ${course?.color||"#E8922E"}44`,
@@ -913,6 +915,7 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,onOpenAssig
                     {course&&<div style={{fontSize:11,color:course.color,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:3}}>
                       {course.icon} {course.label}
                     </div>}
+                    <div style={{fontSize:10,color:"#6A5848",fontFamily:"'JetBrains Mono',monospace",marginBottom:3}}>{t.ticket_number}</div>
                     <div style={{color:"#EDE9E3",fontSize:14,fontWeight:600}}>{t.title.replace(/^\[W\d+\] /,"")}</div>
                     <div style={{marginTop:4}}>{badge(t.status,STATUS_COLOR[t.status])}</div>
                   </div>
@@ -927,9 +930,10 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,onOpenAssig
       {/* Stats */}
       <div className="stats-grid">
         {[
-          {label:"Open",        val:stats.open,        color:"#3b82f6"},
+          {label:"New / Triage",val:stats.new,         color:"#3b82f6"},
           {label:"In Progress", val:stats.inProgress,  color:"#f59e0b"},
-          {label:"Resolved",    val:stats.resolved,    color:"#22c55e"},
+          {label:"Verification",val:stats.verification,color:"#22c55e"},
+          {label:"Closed",      val:stats.closed,      color:"#6b7280"},
           {label:"SLA Breached",val:stats.breached,    color:"#ef4444"},
         ].map(s=>(
           <div key={s.label} style={{background:"#1A1A1A",border:`1px solid ${s.label==="SLA Breached"&&s.val>0?"#ef444444":"#242424"}`,borderRadius:12,padding:"18px 22px"}}>
@@ -946,13 +950,13 @@ function Dashboard({session,tickets,users,activeLabs,assignedTickets,onOpenAssig
           <div className="course-grid">
             {COURSES.map(c=>{
               const cTickets=at.filter(t=>t.course_id===c.id);
-              const open=cTickets.filter(t=>t.status==="Open").length;
-              const active=cTickets.filter(t=>!["Resolved","Closed"].includes(t.status)).length;
+              const open=cTickets.filter(t=>["New","Triage"].includes(t.status)).length;
+              const active=cTickets.filter(t=>t.status!=="Closed").length;
               return (
                 <div key={c.id} style={{background:"#1A1A1A",border:`1px solid ${c.color}33`,borderRadius:12,padding:"18px 22px"}}>
                   <div style={{fontSize:11,color:c.color,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>{c.icon} {c.label}</div>
                   <div style={{fontSize:12,color:"#8A7868"}}>{c.term} Quarter · {active} active lab{active!==1?"s":""}</div>
-                  <div style={{fontSize:12,color:"#8A7868",marginTop:2}}>{cTickets.length} total tickets · {open} open</div>
+                  <div style={{fontSize:12,color:"#8A7868",marginTop:2}}>{cTickets.length} total tickets · {open} awaiting triage</div>
                 </div>
               );
             })}
@@ -1056,6 +1060,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
   const [postingNote,setPostingNote]=useState(false);
   const [noteSave,setNoteSave]=useState({phase:"idle",lastSavedAt:null,error:null});
   const [statusSave,setStatusSave]=useState({phase:"idle",lastSavedAt:null,error:null});
+  const [statusHistory,setStatusHistory]=useState([]);
   const mine=tickets.filter(t=>t.submittedBy===session.id||t.assignedTo===session.id)
     .sort((a,b)=>new Date(b.created)-new Date(a.created));
 
@@ -1092,6 +1097,23 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
         if(data?.updated_at) setNoteSave(current=>({...current,lastSavedAt:data.updated_at}));
       });
   },[selectedAssigned,session.id]);
+
+  useEffect(()=>{
+    if(!selectedAssigned){ setStatusHistory([]); return; }
+    const loadHistory=()=>supabase.from("ticket_status_history")
+        .select("id, from_status, to_status, changed_by, changed_by_alias, changed_at, reopened")
+        .eq("assigned_ticket_id",selectedAssigned)
+        .order("changed_at",{ascending:true})
+        .then(({data,error})=>{
+          if(error) console.error("ticket history load error:",error);
+          else setStatusHistory(data||[]);
+        });
+    loadHistory();
+    const channel=supabase.channel(`ticket-history:${selectedAssigned}`)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"ticket_status_history",filter:`assigned_ticket_id=eq.${selectedAssigned}`},loadHistory)
+      .subscribe();
+    return ()=>{ supabase.removeChannel(channel); };
+  },[selectedAssigned]);
 
   useEffect(()=>{
     if(!selectedAssigned) return;
@@ -1139,6 +1161,15 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
     try {
       const result=await onStatusChange(ticketId,nextStatus);
       setStatusSave({phase:"saved",lastSavedAt:result?.savedAt||new Date().toISOString(),error:null});
+      setStatusHistory(history=>[...history,{
+        id:`confirmed-${Date.now()}`,
+        from_status:assignedTickets.find(ticket=>ticket.id===ticketId)?.status||null,
+        to_status:nextStatus,
+        changed_by:session.id,
+        changed_by_alias:session.name,
+        changed_at:result?.savedAt||new Date().toISOString(),
+        reopened:assignedTickets.find(ticket=>ticket.id===ticketId)?.status==="Closed",
+      }]);
     } catch(error) {
       setStatusSave(current=>({...current,phase:"failed",error:error?.message||"Status was not saved."}));
     }
@@ -1164,8 +1195,8 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
       const requester = scenario ? PERSON_BY_ID[scenario.requesterId] : null;
       const orgColor = requester ? (ORG_COLOR[requester.org]||"#E8922E") : "#E8922E";
       const railColor = PRI_RAIL[at.priority] || "#6b7280";
-      const isResolved = ["Resolved","Closed"].includes(at.status);
-      const statusOptions = ["Open","In Progress","Resolved","Closed"];
+      const isResolved = at.status==="Closed";
+      const statusOptions = [at.status,...(STATUS_TRANSITIONS[at.status]||[])];
       const initials = name => name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase();
 
       return (
@@ -1178,7 +1209,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
             </button>
             <span style={{color:"#3A3A3A",fontSize:12}}>/</span>
             <span style={{fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:"#6A5848",background:"#1A1A1A",border:"1px solid #242424",borderRadius:4,padding:"3px 8px"}}>
-              {at.id?.slice(0,8)||"—"}
+              {at.ticket_number||at.id?.slice(0,8)||"—"}
             </span>
             {course&&<span style={{fontSize:11,color:course.color,fontWeight:700,background:course.color+"15",border:`1px solid ${course.color}30`,borderRadius:4,padding:"3px 8px"}}>{course.icon} {course.id.toUpperCase()}</span>}
             {at.group_tag&&<span style={{fontSize:11,color:"#a78bfa",background:"#a78bfa15",borderRadius:4,padding:"3px 8px"}}>👥 {at.group_tag}</span>}
@@ -1307,6 +1338,21 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                   <span style={{fontSize:11,color:"#6A5848"}}>{fmt(at.created_at)}</span>
                 </div>}
               </div>
+
+              <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
+                <div style={{padding:"10px 16px",borderBottom:"1px solid #1E1E1E",fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",color:"#4A4038"}}>Status History</div>
+                <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:12}}>
+                  {statusHistory.map(entry=>(
+                    <div key={entry.id} style={{fontSize:11,lineHeight:1.5}}>
+                      <div style={{color:entry.reopened?"#f59e0b":"#B8A898",fontWeight:600}}>
+                        {entry.reopened?"Reopened → ":entry.from_status?`${entry.from_status} → `:"Created as "}{entry.to_status}
+                      </div>
+                      <div style={{color:"#6A5848"}}>{entry.changed_by_alias} · {fmt(entry.changed_at)}</div>
+                    </div>
+                  ))}
+                  {statusHistory.length===0&&<div style={{fontSize:11,color:"#4A3828"}}>No status history available.</div>}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1335,7 +1381,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
               const requester = scenario ? PERSON_BY_ID[scenario.requesterId] : null;
               const orgColor = requester ? (ORG_COLOR[requester.org]||"#E8922E") : "#E8922E";
               const railColor = PRI_RAIL[t.priority]||"#6b7280";
-              const isResolved = ["Resolved","Closed"].includes(t.status);
+              const isResolved = t.status==="Closed";
               const initials = requester ? requester.name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase() : "?";
               return (
                 <div key={t.id} className="at-row" onClick={()=>setSelectedAssigned(t.id)}
@@ -1347,6 +1393,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                   <div style={{flex:1,display:"flex",alignItems:"center",gap:0,padding:"0 0 0 0",minWidth:0}}>
                     {/* Subject */}
                     <div style={{flex:1,padding:"14px 16px",minWidth:0}}>
+                      <div style={{fontSize:10,color:"#6A5848",fontFamily:"'JetBrains Mono',monospace",marginBottom:3}}>{t.ticket_number}</div>
                       <div style={{fontSize:13,fontWeight:500,color:isResolved?"#6A5848":"#EDE9E3",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                         {t.title.replace(/^\[W\d+\] /,"")}
                       </div>
@@ -1406,7 +1453,7 @@ function AssignmentQueue({tickets,students}) {
     <div>
       <PageTitle title="Assignment Queue" sub="Shared Supabase assignments — changes made by students appear here across devices." />
       <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
-        {["All","Open","In Progress","Resolved","Closed"].map(status=>(
+        {["All",...STATUSES].map(status=>(
           <button key={status} onClick={()=>setStatusFilter(status)}
             style={{padding:"6px 14px",borderRadius:6,fontSize:12,
               background:statusFilter===status?"#E8922E":"#1A1A1A",
@@ -1422,8 +1469,9 @@ function AssignmentQueue({tickets,students}) {
           {visible.map((ticket,index)=>{
             const course=courseById(ticket.course_id);
             return (
-              <div key={ticket.id} style={{display:"grid",gridTemplateColumns:"minmax(180px,1.5fr) minmax(120px,1fr) 110px 130px",gap:16,
+              <div key={ticket.id} style={{display:"grid",gridTemplateColumns:"110px minmax(180px,1.5fr) minmax(120px,1fr) 110px 130px",gap:16,
                 padding:"14px 18px",alignItems:"center",borderBottom:index<visible.length-1?"1px solid #1E1E1E":"none"}}>
+                <div style={{fontSize:11,color:"#E8922E",fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{ticket.ticket_number}</div>
                 <div>
                   <div style={{fontSize:13,color:"#EDE9E3",fontWeight:600}}>{ticket.title.replace(/^\[W\d+\] /,"")}</div>
                   <div style={{fontSize:10,color:course?.color||"#6A5848",marginTop:3}}>{course?.label||ticket.course_id?.toUpperCase()||"General"}</div>
@@ -2439,7 +2487,7 @@ function MyLabs({session, assignedTickets, onStatusChange, onSaveNote}) {
   const [selected,setSelected]=useState(null);
   const ticket=assignedTickets.find(t=>t.id===selected);
 
-  const statusOptions=["Open","In Progress","Resolved","Closed"];
+  const statusOptions=ticket?[ticket.status,...(STATUS_TRANSITIONS[ticket.status]||[])]:[];
 
   if(selected&&ticket) {
     const course=courseById(ticket.course_id);
@@ -2448,7 +2496,7 @@ function MyLabs({session, assignedTickets, onStatusChange, onSaveNote}) {
         <button onClick={()=>setSelected(null)} style={{...btnGhost,marginBottom:20}}>
           ← Back to My Labs
         </button>
-        <PageTitle title={ticket.title} sub={ticket.lab_assignments?.week_label||`Week ${ticket.week}`} />
+        <PageTitle title={ticket.title} sub={`${ticket.ticket_number} · ${ticket.lab_assignments?.week_label||`Week ${ticket.week}`}`} />
         <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap"}}>
           {badge(ticket.status,STATUS_COLOR[ticket.status])}
           {badge(ticket.priority,PRIORITY_COLOR[ticket.priority])}
@@ -2486,7 +2534,7 @@ function MyLabs({session, assignedTickets, onStatusChange, onSaveNote}) {
         : <div style={{display:"flex",flexDirection:"column",gap:12}}>
             {assignedTickets.map(t=>{
               const course=courseById(t.course_id);
-              const isOpen=!["Resolved","Closed"].includes(t.status);
+              const isOpen=t.status!=="Closed";
               return (
                 <div key={t.id} onClick={()=>setSelected(t.id)}
                   style={{background:"#1A1A1A",border:`1px solid ${isOpen?"#E8922E44":"#242424"}`,
@@ -2824,14 +2872,14 @@ function TicketTable({tickets,users,session,onOpen,showAssigned=false,showSLA=fa
         const requester=PERSON_BY_ID[t.requesterId];
         const orgColor=requester?(ORG_COLOR[requester.org]||"#6A5848"):"#6A5848";
         const railColor=PRI_RAIL[t.priority]||"#6b7280";
-        const isResolved=t.status==="Resolved"||t.status==="Closed";
+        const isResolved=t.ticketNumber?t.status==="Closed":t.status==="Resolved"||t.status==="Closed";
         return (
           <div key={t.id} className="tkt-card" onClick={()=>onOpen(t.id)}
             style={{display:"flex",gap:0,borderBottom:i<tickets.length-1?"1px solid #1A1A1A":"none",cursor:"pointer",background:"transparent",transition:"background 0.1s"}}>
             <div style={{width:4,background:isResolved?"#2A2A2A":railColor,flexShrink:0,opacity:isResolved?0.3:1}}/>
             <div style={{flex:1,padding:"12px 14px",minWidth:0}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-                <span style={{fontSize:10,fontFamily:"'JetBrains Mono',monospace",color:"#4A3828"}}>{t.id}</span>
+                <span style={{fontSize:10,fontFamily:"'JetBrains Mono',monospace",color:"#4A3828"}}>{t.ticketNumber||t.id}</span>
                 {course&&showCourse&&<span style={{fontSize:9,color:course.color,fontWeight:700}}>{course.icon} {course.id.toUpperCase()}</span>}
                 {sla?.breached&&<span style={{fontSize:9,color:"#ef4444",fontWeight:700,animation:"pulse 1.2s infinite"}}>● BREACH</span>}
               </div>
@@ -2867,14 +2915,14 @@ function TicketTable({tickets,users,session,onOpen,showAssigned=false,showSLA=fa
         const orgColor=requester?(ORG_COLOR[requester.org]||"#6A5848"):"#6A5848";
         const assigned=t.assignedTo?users.find(u=>u.id===t.assignedTo):null;
         const railColor=PRI_RAIL[t.priority]||"#6b7280";
-        const isResolved=t.status==="Resolved"||t.status==="Closed";
+        const isResolved=t.ticketNumber?t.status==="Closed":t.status==="Resolved"||t.status==="Closed";
         return (
           <div key={t.id} className="tkt-row" onClick={()=>onOpen(t.id)}
             style={{display:"grid",gridTemplateColumns:`4px 120px 1fr ${showCourse?"80px ":""}160px 100px 110px${showAssigned?" 110px":""}${showSLA?" 90px":""} 90px`,
               borderBottom:"1px solid #1A1A1A",cursor:"pointer",background:"transparent",transition:"background 0.1s",alignItems:"center"}}>
             <div style={{height:"100%",background:isResolved?"#2A2A2A":railColor,opacity:isResolved?0.3:1,alignSelf:"stretch"}}/>
             <div style={{padding:"13px 14px"}}>
-              <div style={{fontSize:11,fontFamily:"'JetBrains Mono',monospace",color:"#6A5848"}}>{t.id}</div>
+              <div style={{fontSize:11,fontFamily:"'JetBrains Mono',monospace",color:"#6A5848"}}>{t.ticketNumber||t.id}</div>
               {sla?.breached&&<div style={{fontSize:9,color:"#ef4444",fontWeight:700,marginTop:2,animation:"pulse 1.2s infinite"}}>● SLA BREACH</div>}
             </div>
             <div style={{padding:"13px 14px",minWidth:0}}>
