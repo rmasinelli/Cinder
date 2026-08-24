@@ -35,6 +35,13 @@ test("the active migration path is complete and ordered", () => {
   assert.deepEqual(migrations, expectedMigrations);
 });
 
+test("active migrations can replace previously deployed functions", () => {
+  for (const file of expectedMigrations) {
+    const sql = readFileSync(new URL(file, migrationDirectory), "utf8");
+    assert.doesNotMatch(sql, /^create function /m);
+  }
+});
+
 test("the baseline owns every application table", () => {
   for (const table of [
     "classes",
@@ -65,6 +72,11 @@ test("the baseline contains final classroom constraints and RLS", () => {
   ]) {
     assert.match(baseline, new RegExp(`constraint ${constraint}`));
   }
+
+  assert.match(
+    baseline,
+    /if not exists \([\s\S]*?quarter not in \('Fall', 'Winter', 'Spring', 'Summer'\)[\s\S]*?validate constraint classes_quarter_check/,
+  );
 
   for (const table of [
     "classes",

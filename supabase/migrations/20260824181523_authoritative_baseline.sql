@@ -209,7 +209,20 @@ $$;
 
 alter table public.profiles validate constraint profiles_role_check;
 alter table public.classes validate constraint classes_course_check;
-alter table public.classes validate constraint classes_quarter_check;
+-- Preserve legacy class rows during an upgrade while enforcing the constraint
+-- for every new or changed row. Fresh databases validate it immediately.
+do $$
+begin
+  if not exists (
+    select 1
+    from public.classes
+    where quarter is not null
+      and quarter not in ('Fall', 'Winter', 'Spring', 'Summer')
+  ) then
+    alter table public.classes validate constraint classes_quarter_check;
+  end if;
+end;
+$$;
 alter table public.classes validate constraint classes_year_check;
 alter table public.ticket_templates validate constraint templates_course_check;
 alter table public.ticket_templates validate constraint templates_priority_check;
