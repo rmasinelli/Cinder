@@ -20,6 +20,7 @@ test("student writes use narrow server-side RPCs", () => {
     "update_my_assigned_ticket_status",
     "save_my_lab_note",
     "save_my_field_journal_link",
+    "review_assigned_ticket",
   ]) {
     assert.match(app, new RegExp(`supabase\\.rpc\\(\"${rpc}\"`));
   }
@@ -29,6 +30,7 @@ test("student writes use narrow server-side RPCs", () => {
   assert.doesNotMatch(app, /from\("assigned_tickets"\)\s*\.update\(/);
   assert.doesNotMatch(app, /from\("lab_notes"\)\s*\.(?:insert|update|upsert)\(/);
   assert.doesNotMatch(app, /from\("field_journal_links"\)\s*\.(?:insert|update|upsert)\(/);
+  assert.doesNotMatch(app, /from\("ticket_verification_reviews"\)\s*\.(?:insert|update|upsert)\(/);
 });
 
 test("class codes are reachable only through controlled enrollment RPCs", () => {

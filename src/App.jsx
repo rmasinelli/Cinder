@@ -162,7 +162,7 @@ export default function App() {
   const refreshAssignedTickets = useCallback(async currentSession => {
     if (!currentSession) return;
     let query = supabase.from("assigned_tickets")
-      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(manual_type, service_log_number, station_id)")
+      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(*), ticket_status_history(changed_at), ticket_verification_reviews(action, feedback, manual_checked, created_at, reviewer_alias)")
       .order("created_at",{ascending:false});
     if (currentSession.role !== "admin") query = query.eq("student_id",currentSession.id);
     const {data,error} = await query;
@@ -282,6 +282,7 @@ export default function App() {
     const channel = supabase.channel(`classroom-assignments:${session.id}`)
       .on("postgres_changes",{event:"*",schema:"public",table:"assigned_tickets"},refresh)
       .on("postgres_changes",{event:"*",schema:"public",table:"lab_notes"},refresh)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"ticket_verification_reviews"},refresh)
       .subscribe();
     window.addEventListener("focus",refresh);
     return ()=>{
@@ -409,6 +410,18 @@ export default function App() {
     return {savedAt:new Date().toISOString()};
   }
 
+  async function reviewAssignedTicket(ticketId, action, manualChecked, feedback) {
+    const {error} = await supabase.rpc("review_assigned_ticket", {
+      p_assigned_ticket_id:ticketId,
+      p_action:action,
+      p_manual_checked:Boolean(manualChecked),
+      p_feedback:feedback?.trim()||null,
+    });
+    if(error){ showToast(`Review failed: ${error.message}`,"error"); throw error; }
+    await refreshAssignedTickets(session);
+    showToast(action==="Approved"?"Ticket approved and closed.":action==="Returned"?"Ticket returned with feedback.":"Ticket reopened with feedback.");
+  }
+
   if(!ready) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0D0D0D",gap:14}}>
       <GlobalStyles />
@@ -449,7 +462,7 @@ export default function App() {
           onOpen={()=>{}} />
       )}
       {view==="queue" && session.role==="admin" && (
-        <AssignmentQueue tickets={assignedTickets} students={classStudents} />
+        <AssignmentQueue tickets={assignedTickets} students={classStudents} onReview={reviewAssignedTicket} />
       )}
       {view==="labs" && session.role==="admin" && (
         <LabsHub
@@ -1175,6 +1188,7 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
   const [noteSave,setNoteSave]=useState({phase:"idle",lastSavedAt:null,error:null});
   const [statusSave,setStatusSave]=useState({phase:"idle",lastSavedAt:null,error:null});
   const [statusHistory,setStatusHistory]=useState([]);
+  const [reviewHistory,setReviewHistory]=useState([]);
   const mine=tickets.filter(t=>t.submittedBy===session.id||t.assignedTo===session.id)
     .sort((a,b)=>new Date(b.created)-new Date(a.created));
 
@@ -1225,6 +1239,23 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
     loadHistory();
     const channel=supabase.channel(`ticket-history:${selectedAssigned}`)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"ticket_status_history",filter:`assigned_ticket_id=eq.${selectedAssigned}`},loadHistory)
+      .subscribe();
+    return ()=>{ supabase.removeChannel(channel); };
+  },[selectedAssigned]);
+
+  useEffect(()=>{
+    if(!selectedAssigned){ setReviewHistory([]); return; }
+    const loadReviews=()=>supabase.from("ticket_verification_reviews")
+      .select("id, action, manual_checked, feedback, reviewer_alias, created_at")
+      .eq("assigned_ticket_id",selectedAssigned)
+      .order("created_at",{ascending:true})
+      .then(({data,error})=>{
+        if(error) console.error("verification review load error:",error);
+        else setReviewHistory(data||[]);
+      });
+    loadReviews();
+    const channel=supabase.channel(`ticket-reviews:${selectedAssigned}`)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"ticket_verification_reviews",filter:`assigned_ticket_id=eq.${selectedAssigned}`},loadReviews)
       .subscribe();
     return ()=>{ supabase.removeChannel(channel); };
   },[selectedAssigned]);
@@ -1310,7 +1341,8 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
       const orgColor = requester ? (ORG_COLOR[requester.org]||"#E8922E") : "#E8922E";
       const railColor = PRI_RAIL[at.priority] || "#6b7280";
       const isResolved = at.status==="Closed";
-      const statusOptions = [at.status,...(STATUS_TRANSITIONS[at.status]||[])];
+      const studentTransitions=STATUS_TRANSITIONS[at.status]||[];
+      const statusOptions = [at.status,...studentTransitions.filter(next=>next!=="Closed"&&at.status!=="Closed")];
       const initials = name => name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase();
 
       return (
@@ -1466,7 +1498,16 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
                       <div style={{color:"#6A5848"}}>{entry.changed_by_alias} · {fmt(entry.changed_at)}</div>
                     </div>
                   ))}
-                  {statusHistory.length===0&&<div style={{fontSize:11,color:"#4A3828"}}>No status history available.</div>}
+                  {reviewHistory.map(entry=>(
+                    <div key={`review-${entry.id}`} style={{fontSize:11,lineHeight:1.5,borderLeft:`2px solid ${entry.action==="Approved"?"#4ade80":"#f59e0b"}`,paddingLeft:10}}>
+                      <div style={{color:entry.action==="Approved"?"#4ade80":"#f59e0b",fontWeight:700}}>
+                        Instructor {entry.action}{entry.manual_checked?" · printed manual checked":""}
+                      </div>
+                      {entry.feedback&&<div style={{color:"#B8A898",marginTop:2}}>{entry.feedback}</div>}
+                      <div style={{color:"#6A5848"}}>{entry.reviewer_alias} · {fmt(entry.created_at)}</div>
+                    </div>
+                  ))}
+                  {statusHistory.length===0&&reviewHistory.length===0&&<div style={{fontSize:11,color:"#4A3828"}}>No status history available.</div>}
                 </div>
               </div>
             </div>
@@ -1562,47 +1603,105 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
 // ═══════════════════════════════════════════════════════════════
 // QUEUE
 // ═══════════════════════════════════════════════════════════════
-function AssignmentQueue({tickets,students}) {
-  const [statusFilter,setStatusFilter]=useState("All");
-  const visible=tickets.filter(t=>statusFilter==="All"||t.status===statusFilter);
+function AssignmentQueue({tickets,students,onReview}) {
+  const [filter,setFilter]=useState("Awaiting review");
+  const [expanded,setExpanded]=useState(null);
+  const [manualChecked,setManualChecked]=useState(false);
+  const [feedback,setFeedback]=useState("");
+  const [saving,setSaving]=useState(false);
   const studentName=id=>students.find(student=>student.id===id)?.alias||"Unknown student";
+  const latestReview=ticket=>[...(ticket.ticket_verification_reviews||[])].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+  const journalFor=ticket=>Array.isArray(ticket.field_journal_links)?ticket.field_journal_links[0]:ticket.field_journal_links;
+  const lastActivity=ticket=>{
+    const journal=journalFor(ticket);
+    return Math.max(
+      new Date(ticket.created_at||0).getTime(),
+      ...(ticket.ticket_status_history||[]).map(entry=>new Date(entry.changed_at).getTime()),
+      ...(ticket.ticket_verification_reviews||[]).map(entry=>new Date(entry.created_at).getTime()),
+      ...(journal?.updated_at?[new Date(journal.updated_at).getTime()]:[]),
+    );
+  };
+  const matchesFilter=ticket=>{
+    const review=latestReview(ticket);
+    if(filter==="Awaiting review") return ticket.status==="Verification";
+    if(filter==="Returned") return review?.action==="Returned";
+    if(filter==="Approved") return review?.action==="Approved";
+    if(filter==="Reopened") return review?.action==="Reopened";
+    return true;
+  };
+  const visible=tickets.filter(matchesFilter).sort((a,b)=>lastActivity(b)-lastActivity(a));
+  const awaiting=tickets.filter(ticket=>ticket.status==="Verification").length;
+
+  async function submit(ticket,action){
+    if(saving) return;
+    if(action==="Approved"&&!manualChecked) return;
+    if(action!=="Approved"&&!feedback.trim()) return;
+    setSaving(true);
+    try {
+      await onReview(ticket.id,action,manualChecked,feedback);
+      setExpanded(null); setManualChecked(false); setFeedback("");
+    } finally { setSaving(false); }
+  }
 
   return (
     <div>
-      <PageTitle title="Assignment Queue" sub="Shared Supabase assignments — changes made by students appear here across devices." />
+      <PageTitle title="Instructor Verification" sub={`${awaiting} ticket${awaiting!==1?"s":""} awaiting printed-manual review and sign-off.`} />
       <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
-        {["All",...STATUSES].map(status=>(
-          <button key={status} onClick={()=>setStatusFilter(status)}
-            style={{padding:"6px 14px",borderRadius:6,fontSize:12,
-              background:statusFilter===status?"#E8922E":"#1A1A1A",
-              color:statusFilter===status?"#0D0D0D":"#B8A898",
-              border:`1px solid ${statusFilter===status?"#E8922E":"#242424"}`,
-              fontWeight:statusFilter===status?700:400}}>
-            {status}
+        {["Awaiting review","Returned","Approved","Reopened","All"].map(value=>(
+          <button key={value} onClick={()=>setFilter(value)} style={{padding:"6px 14px",borderRadius:6,fontSize:12,
+            background:filter===value?"#E8922E":"#1A1A1A",color:filter===value?"#0D0D0D":"#B8A898",
+            border:`1px solid ${filter===value?"#E8922E":"#242424"}`,fontWeight:filter===value?700:400}}>
+            {value}{value==="Awaiting review"?` (${awaiting})`:""}
           </button>
         ))}
       </div>
-      {visible.length===0?<EmptyState msg="No shared assignments in this view."/>:(
-        <div style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
-          {visible.map((ticket,index)=>{
+      {visible.length===0?<EmptyState msg={filter==="Awaiting review"?"No tickets are awaiting instructor review.":"No tickets in this review view."}/>:(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {visible.map(ticket=>{
             const course=courseById(ticket.course_id);
-            const journalLink=Array.isArray(ticket.field_journal_links)?ticket.field_journal_links[0]:ticket.field_journal_links;
-            return (
-              <div key={ticket.id} style={{display:"grid",gridTemplateColumns:"110px minmax(180px,1.5fr) minmax(120px,1fr) 110px 130px",gap:16,
-                padding:"14px 18px",alignItems:"center",borderBottom:index<visible.length-1?"1px solid #1E1E1E":"none"}}>
+            const journalLink=journalFor(ticket);
+            const review=latestReview(ticket);
+            const isOpen=expanded===ticket.id;
+            return <div key={ticket.id} style={{background:"#141414",border:`1px solid ${isOpen?"#E8922E55":"#1E1E1E"}`,borderRadius:10,overflow:"hidden"}}>
+              <button onClick={()=>{setExpanded(isOpen?null:ticket.id);setManualChecked(false);setFeedback("");}}
+                style={{width:"100%",background:"none",border:"none",padding:"16px 18px",display:"grid",gridTemplateColumns:"120px minmax(180px,1.5fr) minmax(130px,1fr) 130px",gap:16,textAlign:"left",alignItems:"center"}}>
                 <div>
-                  <div style={{fontSize:11,color:"#E8922E",fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{ticket.ticket_number}</div>
-                  {journalLink&&<div style={{fontSize:9,color:"#6A5848",marginTop:3}}>{journalLink.manual_type} · TKT-{String(journalLink.service_log_number).padStart(4,"0")}</div>}
+                  <div style={{fontSize:11,color:"#E8922E",fontFamily:"'JetBrains Mono',monospace",fontWeight:700}}>{ticket.ticket_number}</div>
+                  {journalLink&&<div style={{fontSize:9,color:"#8A7868",marginTop:4}}>{journalLink.manual_type} · TKT-{String(journalLink.service_log_number).padStart(4,"0")}</div>}
                 </div>
                 <div>
                   <div style={{fontSize:13,color:"#EDE9E3",fontWeight:600}}>{ticket.title.replace(/^\[W\d+\] /,"")}</div>
                   <div style={{fontSize:10,color:course?.color||"#6A5848",marginTop:3}}>{course?.label||ticket.course_id?.toUpperCase()||"General"}</div>
                 </div>
-                <div style={{fontSize:12,color:"#B8A898",fontFamily:"monospace"}}>{studentName(ticket.student_id)}</div>
-                <div>{badge(ticket.priority,PRIORITY_COLOR[ticket.priority])}</div>
-                <div>{badge(ticket.status,STATUS_COLOR[ticket.status])}</div>
-              </div>
-            );
+                <div>
+                  <div style={{fontSize:12,color:"#B8A898",fontFamily:"monospace"}}>{studentName(ticket.student_id)}</div>
+                  <div style={{fontSize:10,color:"#6A5848",marginTop:3}}>{journalLink?.team_role||"Role not recorded"}</div>
+                </div>
+                <div>
+                  {badge(ticket.status,STATUS_COLOR[ticket.status])}
+                  <div style={{fontSize:9,color:"#6A5848",marginTop:5}}>Active {timeAgo(new Date(lastActivity(ticket)).toISOString())}</div>
+                </div>
+              </button>
+              {isOpen&&<div style={{borderTop:"1px solid #242424",padding:"18px",background:"#101010"}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:16}}>
+                  <DetailRow label="Station" val={journalLink?.station_id||"Not recorded"}/>
+                  <DetailRow label="Assets" val={journalLink?.asset_ids?.join(", ")||"Not recorded"}/>
+                  <DetailRow label="Priority" val={journalLink?.chosen_priority||ticket.priority}/>
+                  <DetailRow label="Last activity" val={fmt(new Date(lastActivity(ticket)).toISOString())}/>
+                </div>
+                {journalLink?.client_resolution&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>Client-facing resolution</div><div style={{fontSize:12,color:"#B8A898",lineHeight:1.5}}>{journalLink.client_resolution}</div></div>}
+                {review?.feedback&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:14}}>Last {review.action.toLowerCase()} feedback: {review.feedback}</div>}
+                {(ticket.status==="Verification"||ticket.status==="Closed")&&<>
+                  {ticket.status==="Verification"&&<label style={{display:"flex",gap:9,alignItems:"center",fontSize:12,color:"#D8C8B8",marginBottom:12}}><input type="checkbox" checked={manualChecked} onChange={event=>setManualChecked(event.target.checked)}/> I checked the student’s printed Service Log entry.</label>}
+                  <textarea value={feedback} onChange={event=>setFeedback(event.target.value)} style={{...inputStyle,minHeight:72,resize:"vertical",marginBottom:12}} placeholder={ticket.status==="Closed"?"Why is this ticket being reopened?":"Actionable feedback required when returning; optional approval note"}/>
+                  <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
+                    {ticket.status==="Verification"&&<button disabled={saving||!feedback.trim()} onClick={()=>submit(ticket,"Returned")} style={{...btnGhost,color:"#f59e0b",borderColor:"#f59e0b55"}}>Return with feedback</button>}
+                    {ticket.status==="Verification"&&<button disabled={saving||!manualChecked} onClick={()=>submit(ticket,"Approved")} style={{...btnPrimary,width:"auto",padding:"8px 16px"}}>Approve & close</button>}
+                    {ticket.status==="Closed"&&<button disabled={saving||!feedback.trim()} onClick={()=>submit(ticket,"Reopened")} style={{...btnGhost,color:"#f59e0b",borderColor:"#f59e0b55"}}>Reopen ticket</button>}
+                  </div>
+                </>}
+              </div>}
+            </div>;
           })}
         </div>
       )}
