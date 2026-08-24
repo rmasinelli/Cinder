@@ -135,6 +135,11 @@ npm run dev
 
 Open `http://localhost:5173/Cinder/` in your browser.
 
+The app uses production Supabase defaults. To run against the local stack,
+set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local`
+from the values printed by `npx supabase status`. Local environment files are
+ignored and must never be committed.
+
 For a clean local database, install Docker and the Supabase CLI, then run:
 
 ```bash

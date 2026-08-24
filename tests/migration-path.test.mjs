@@ -22,6 +22,10 @@ const migrationGuide = readFileSync(
   "utf8",
 );
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+const supabaseClient = readFileSync(
+  new URL("../src/lib/supabase.js", import.meta.url),
+  "utf8",
+);
 
 test("the active migration path is complete and ordered", () => {
   const migrations = readdirSync(migrationDirectory)
@@ -97,4 +101,9 @@ test("custom scenario metadata uses the schema's JSON column", () => {
   assert.match(app, /scenario:\{\.\.\.\(storedScenario\|\|\{\}\),requesterId,instructorNotes\}/);
   assert.match(app, /data\.map\(fromTicketTemplateRow\)/);
   assert.doesNotMatch(app, /ticket_templates"\)\.insert\(\{\.\.\.scenario,id\}/);
+});
+
+test("the app can target a clean local Supabase stack", () => {
+  assert.match(supabaseClient, /import\.meta\.env\.VITE_SUPABASE_URL/);
+  assert.match(supabaseClient, /import\.meta\.env\.VITE_SUPABASE_PUBLISHABLE_KEY/);
 });
