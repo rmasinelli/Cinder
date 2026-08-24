@@ -208,8 +208,15 @@ export default function App() {
   useEffect(()=>{
     (async()=>{
       // Restore Supabase session if one exists
-      const { data: { session: authSession } } = await supabase.auth.getSession();
-      if (authSession) await loadProfile(authSession.user.id);
+      const { data: { session: authSession }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        // A refresh token can become invalid after a deploy, reset, or another
+        // tab consumes it. Clear only this browser session so public login RPCs
+        // do not keep receiving an expired Authorization header.
+        await supabase.auth.signOut({scope:"local"});
+      } else if (authSession) {
+        await loadProfile(authSession.user.id);
+      }
 
       setReady(true);
     })();
@@ -593,11 +600,19 @@ function Login({ onSignIn }) {
 
   const codeKnown = !!getStoredCodes()[alias.toLowerCase().trim()];
 
+  async function preparePublicAuthRequest() {
+    // Login, enrollment, and password reset begin as anonymous operations.
+    // Removing a stale local session prevents an invalid bearer token from
+    // turning an otherwise valid public RPC into a 403 response.
+    await supabase.auth.signOut({scope:"local"});
+  }
+
   async function handleSignIn() {
     setErr(""); setLoading(true);
     if (!alias.trim() || !pass) { setErr("Alias and password required."); setLoading(false); return; }
     const code = classCode.trim();
     if (!code) { setErr("Enter your class code."); setLoading(false); return; }
+    await preparePublicAuthRequest();
     const {data:email,error:resolveErr} = await supabase.rpc("resolve_student_login", {
       p_alias: alias.trim(),
       p_class_code: code,
@@ -617,6 +632,7 @@ function Login({ onSignIn }) {
     if (!allCodes.length || !alias.trim() || !pass) { setErr("All fields required."); setLoading(false); return; }
     if (pass !== confirm) { setErr("Passwords do not match."); setLoading(false); return; }
     if (pass.length < 6)  { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+    await preparePublicAuthRequest();
 
     // Exact-code validation returns only sanitized metadata when every code is
     // open and unexpired. It never exposes the classes table or partial matches.
@@ -666,6 +682,7 @@ function Login({ onSignIn }) {
     }
     if (newPass !== confirmNew) { setErr("Passwords do not match."); setLoading(false); return; }
     if (newPass.length < 6)    { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+    await preparePublicAuthRequest();
     const { data, error } = await supabase.rpc("reset_student_password", {
       p_alias: alias.trim(), p_class_code: classCode.trim(),
       p_pin: resetPin.trim(), p_new_password: newPass,
