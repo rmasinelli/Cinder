@@ -6,7 +6,17 @@
 // ─────────────────────────────────────────────
 
 export const PRIORITIES = ["Low", "Medium", "High", "Critical"];
-export const STATUSES   = ["Open", "In Progress", "Pending", "Resolved", "Closed"];
+export const STATUSES = ["New", "Triage", "In Progress", "Waiting", "Escalated", "Verification", "Closed"];
+
+export const STATUS_TRANSITIONS = {
+  New: ["Triage"],
+  Triage: ["In Progress", "Escalated"],
+  "In Progress": ["Waiting", "Escalated", "Verification"],
+  Waiting: ["In Progress", "Escalated"],
+  Escalated: ["In Progress", "Waiting", "Verification"],
+  Verification: ["In Progress", "Closed"],
+  Closed: ["Triage"],
+};
 
 export const PRIORITY_COLOR = {
   Low:      "#22c55e",
@@ -16,10 +26,16 @@ export const PRIORITY_COLOR = {
 };
 
 export const STATUS_COLOR = {
+  // Legacy demo-ticket colors remain until those hidden components are removed.
   Open:          "#3b82f6",
-  "In Progress": "#f59e0b",
   Pending:       "#8b5cf6",
   Resolved:      "#22c55e",
+  New:           "#3b82f6",
+  Triage:        "#38bdf8",
+  "In Progress": "#f59e0b",
+  Waiting:       "#8b5cf6",
+  Escalated:     "#ef4444",
+  Verification:  "#22c55e",
   Closed:        "#6b7280",
 };
 
