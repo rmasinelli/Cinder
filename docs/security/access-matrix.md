@@ -49,3 +49,36 @@ the runtime boundary with separate student and instructor accounts:
 
 The anonymous class-code lookup remains intentionally available for the current
 join flow. Restricting and rotating enrollment codes is tracked in Issue #8.
+
+## Production verification — August 24, 2026
+
+Migration `20260824173200_harden_classroom_rls.sql` was applied atomically to
+the Cinder `main` production project after confirming a recent backup. The
+pre/post record inventory was unchanged.
+
+Student-role tests used an existing student identity and forced a transaction
+rollback after collecting the result:
+
+- Other profiles were not visible.
+- Protected profile and membership changes affected no rows.
+- Direct note insertion was denied.
+- Own ticket-status RPC: passed
+- Other-ticket status RPC: denied
+- Own note RPC: passed
+
+Instructor-role tests also ran inside a forced-rollback transaction:
+
+- Admin predicate and full profile visibility: passed
+- Profile and assigned-ticket management: passed
+- Temporary class create/delete: passed
+- Temporary membership create/delete: passed
+
+The post-migration catalog contains the expected explicit classroom policies
+and none of the legacy student-write policies. All privileged functions have an
+empty pinned `search_path` and explicit role execution grants.
+
+The refreshed Supabase Security Advisor reported **0 errors** and **8
+warnings**. Seven warnings identify the intentionally callable privileged RPCs;
+their caller/ownership checks and execution grants are covered above. The
+remaining warning is the project-level **Leaked Password Protection Disabled**
+setting and is not caused by this migration.

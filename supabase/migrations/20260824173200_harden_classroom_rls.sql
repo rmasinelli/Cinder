@@ -41,6 +41,35 @@ alter table public.lab_notes enable row level security;
 
 -- Remove every legacy policy on the classroom tables before rebuilding the
 -- access matrix with explicit operations, roles, USING, and WITH CHECK rules.
+-- Production has accumulated policy names from several one-off patches, so
+-- enumerate the target tables instead of relying only on historical names.
+do $$
+declare
+  existing_policy record;
+begin
+  for existing_policy in
+    select tablename, policyname
+    from pg_catalog.pg_policies
+    where schemaname = 'public'
+      and tablename in (
+        'classes',
+        'profiles',
+        'profile_classes',
+        'ticket_templates',
+        'lab_assignments',
+        'assigned_tickets',
+        'lab_notes'
+      )
+  loop
+    execute format(
+      'drop policy if exists %I on public.%I',
+      existing_policy.policyname,
+      existing_policy.tablename
+    );
+  end loop;
+end;
+$$;
+
 drop policy if exists "classes: public read" on public.classes;
 drop policy if exists "classes: admin insert" on public.classes;
 
