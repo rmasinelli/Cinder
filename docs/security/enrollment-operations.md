@@ -49,3 +49,26 @@ that invokes this RPC.
 - Closing or rotating enrollment never removes `profile_classes` rows.
 - Password reset and sign-in use the current code plus the student's alias;
   neither endpoint reveals whether a different class exists.
+
+## Production verification — August 24, 2026
+
+The migration was applied atomically to the Cinder production project after a
+successful forced-rollback dry run. Preflight confirmed there were no duplicate
+primary-class aliases or incompatible existing codes.
+
+Live role tests, all executed in rollback-only transactions, confirmed:
+
+- Anonymous direct access to `classes` is denied.
+- Invalid and mixed valid/invalid code sets return the same generic failure.
+- A valid exact code returns one sanitized class match.
+- Students see no raw class rows and can load only their sanitized memberships.
+- An invalid late-add attempt fails without changing enrollment.
+- Instructors can read class controls and rotate a code.
+- The old code fails immediately after rotation, the new code succeeds, and an
+  existing student login continues to resolve because `login_key` is stable.
+
+The refreshed Supabase Security Advisor reported **0 errors**. Its warnings
+identify the intentionally callable enrollment/classroom RPCs and the existing
+project-level leaked-password-protection setting; every new privileged RPC has
+a pinned empty `search_path`, an explicit caller/ownership check where needed,
+and explicit execution grants.

@@ -53,7 +53,12 @@ test("class codes are reachable only through controlled enrollment RPCs", () => 
     "add_my_class_by_code",
     "rotate_class_enrollment_code",
   ]) {
-    assert.match(enrollmentMigration, new RegExp(`(?:create or replace|create) function public\\.${rpc}`));
+    assert.match(
+      enrollmentMigration,
+      new RegExp(
+        `(?:create or replace|create) function public\\.${rpc}[\\s\\S]*?security definer[\\s\\S]*?set search_path = ''`,
+      ),
+    );
   }
 });
 
