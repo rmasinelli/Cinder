@@ -89,11 +89,11 @@ Cinder/
       courses.js            ← course definitions and categories
       scenarios.js          ← all 30 lab scenarios (edit here each quarter)
       seeds.js              ← fallback seed data for non-auth views
-  supabase-schema.sql       ← initial database schema
-  supabase-patch-1.sql      ← cohort column + public class read policy
-  supabase-patch-2.sql      ← fix recursive RLS on profiles
-  supabase-patch-3.sql      ← assigned_tickets column updates
-  supabase-patch-4.sql      ← admin insert policies + lab_notes unique constraint
+  supabase/
+    config.toml             ← local Supabase configuration
+    migrations/            ← authoritative, ordered database setup
+    seeds/knowledge/        ← optional KB content imports
+    legacy/                 ← historical reference; never apply directly
 ```
 
 **Where to make common changes:**
@@ -105,6 +105,7 @@ Cinder/
 | Course names or categories | `src/data/courses.js` |
 | Supabase connection | `src/lib/supabase.js` |
 | UI or logic | `src/App.jsx` |
+| Database setup and upgrades | `docs/database/migrations.md` |
 
 ---
 
@@ -133,6 +134,17 @@ npm run dev
 ```
 
 Open `http://localhost:5173/Cinder/` in your browser.
+
+For a clean local database, install Docker and the Supabase CLI, then run:
+
+```bash
+npx supabase start
+npx supabase db reset
+```
+
+The three files in `supabase/migrations/` are the only authoritative schema
+path. See `docs/database/migrations.md` before changing or deploying the
+database. Never run a linked/production database reset.
 
 ### Manual Deploy (if needed)
 

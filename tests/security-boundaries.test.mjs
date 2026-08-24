@@ -5,7 +5,7 @@ import test from "node:test";
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const migration = readFileSync(
   new URL(
-    "../supabase/migrations/20260824173200_harden_classroom_rls.sql",
+    "../supabase/migrations/20260824181524_classroom_authorization.sql",
     import.meta.url,
   ),
   "utf8",
@@ -35,7 +35,7 @@ test("class codes are reachable only through controlled enrollment RPCs", () => 
 
   const enrollmentMigration = readFileSync(
     new URL(
-      "../supabase/migrations/20260824180128_private_enrollment_codes.sql",
+      "../supabase/migrations/20260824181525_private_enrollment.sql",
       import.meta.url,
     ),
     "utf8",
