@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(27);
+select plan(40);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -77,6 +77,95 @@ select lives_ok($$
     'hw', 1, 'No POST', 'Desktop powers on without display', 'High'
   )
 $$, 'instructor assigns a ticket to student one');
+select lives_ok($$
+  insert into public.readiness_checks (
+    id, assignment_id, class_id, title, status, questions, created_by, published_at
+  ) values (
+    '50000000-0000-0000-0000-000000000001',
+    '30000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001',
+    'Week 1 readiness', 'published',
+    '[
+      {"id":"q1","prompt":"Q1","options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"correct":"a","explanation":"E1"},
+      {"id":"q2","prompt":"Q2","options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"correct":"a","explanation":"E2"},
+      {"id":"q3","prompt":"Q3","options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"correct":"a","explanation":"E3"},
+      {"id":"q4","prompt":"Q4","options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"correct":"a","explanation":"E4"},
+      {"id":"q5","prompt":"Q5","options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"correct":"a","explanation":"E5"}
+    ]'::jsonb,
+    '20000000-0000-0000-0000-000000000003', now()
+  )
+$$, 'instructor publishes a five-question readiness check');
+reset role;
+
+select ok(
+  not has_function_privilege('anon', 'public.submit_my_readiness_check(uuid,jsonb)', 'EXECUTE'),
+  'anonymous users cannot submit readiness checks'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.submit_my_readiness_check(uuid,jsonb)', 'EXECUTE'),
+  'authenticated students may call the ownership-scoped readiness RPC'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select is(
+  (select count(*)::integer from public.assigned_tickets), 0,
+  'published readiness hides the student ticket before passing'
+);
+select is(
+  (select count(*)::integer from public.get_my_readiness_checks()), 1,
+  'assigned student receives their readiness check'
+);
+select ok(
+  not ((select questions from public.get_my_readiness_checks())::text like '%correct%'),
+  'sanitized readiness questions do not expose the answer key'
+);
+select lives_ok(
+  $$select public.submit_my_readiness_check(
+    '50000000-0000-0000-0000-000000000001',
+    '{"q1":"b","q2":"b","q3":"b","q4":"b","q5":"b"}'::jsonb
+  )$$,
+  'student may submit an unsuccessful attempt'
+);
+select is(
+  (select state from public.get_my_readiness_checks()), 'preparing',
+  'an unsuccessful attempt puts the student at the preparation station'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000002', true);
+select throws_ok(
+  $$select public.submit_my_readiness_check(
+    '50000000-0000-0000-0000-000000000001',
+    '{"q1":"a","q2":"a","q3":"a","q4":"a","q5":"a"}'::jsonb
+  )$$,
+  'P0002', 'readiness_check_not_found',
+  'another student cannot submit or inspect an unassigned check'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select lives_ok(
+  $$select public.submit_my_readiness_check(
+    '50000000-0000-0000-0000-000000000001',
+    '{"q1":"a","q2":"a","q3":"a","q4":"a","q5":"b"}'::jsonb
+  )$$,
+  'student may retry and pass at eighty percent'
+);
+select is(
+  (select passed from public.get_my_readiness_checks()), true,
+  'passing marks only the authenticated student ready'
+);
+select is(
+  (select count(*)::integer from public.assigned_tickets), 1,
+  'passing automatically releases the student ticket'
+);
+select is(
+  (select count(*)::integer from public.readiness_attempts), 2,
+  'both attempts remain recorded for low-stakes tracking'
+);
 reset role;
 
 set local role authenticated;

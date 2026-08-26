@@ -160,6 +160,8 @@ export default function App() {
   const [toast,setToast]           = useState(null);
   const [classStudents,setClassStudents]   = useState([]);
   const [assignedTickets,setAssignedTickets] = useState([]);
+  const [readinessChecks,setReadinessChecks] = useState([]);
+  const [safetyAcknowledgments,setSafetyAcknowledgments] = useState([]);
   const [customScenarios,setCustomScenarios] = useState([]);
   const [showOnboarding,setShowOnboarding]   = useState(false);
   const [deepAssigned,setDeepAssigned]       = useState(null); // assigned ticket id to auto-open in MyTickets
@@ -176,6 +178,18 @@ export default function App() {
       return;
     }
     setAssignedTickets(data||[]);
+  },[]);
+
+  const refreshReadinessChecks = useCallback(async currentSession => {
+    if (!currentSession || currentSession.role === "admin") return;
+    const [checkRes,safetyRes] = await Promise.all([
+      supabase.rpc("get_my_readiness_checks"),
+      supabase.from("safety_acknowledgments").select("class_id,acknowledged_at"),
+    ]);
+    if(checkRes.error) console.error("readiness check load error:",checkRes.error);
+    else setReadinessChecks(checkRes.data||[]);
+    if(safetyRes.error) console.error("safety acknowledgment load error:",safetyRes.error);
+    else setSafetyAcknowledgments(safetyRes.data||[]);
   },[]);
 
   // ── Load profile from Supabase after auth ──────────────────────
@@ -242,7 +256,7 @@ export default function App() {
   async function logout() {
     await supabase.auth.signOut();
     setSession(null); setView("dashboard"); setSelected(null);
-    setClassStudents([]); setAssignedTickets([]);
+    setClassStudents([]); setAssignedTickets([]); setReadinessChecks([]); setSafetyAcknowledgments([]);
   }
 
   // ── Load class students (admin) or assigned tickets (student) after login ──
@@ -290,7 +304,10 @@ export default function App() {
     }
 
     refreshAssignedTickets(session);
-    const refresh = () => refreshAssignedTickets(session);
+    refreshReadinessChecks(session);
+    // Readiness must refetch with the tickets: a check published mid-session
+    // hides the ticket, and only this refresh reveals the preparation station.
+    const refresh = () => { refreshAssignedTickets(session); refreshReadinessChecks(session); };
     const channel = supabase.channel(`classroom-assignments:${session.id}`)
       .on("postgres_changes",{event:"*",schema:"public",table:"assigned_tickets"},refresh)
       .on("postgres_changes",{event:"*",schema:"public",table:"lab_notes"},refresh)
@@ -301,7 +318,21 @@ export default function App() {
       window.removeEventListener("focus",refresh);
       supabase.removeChannel(channel);
     };
-  },[session,refreshAssignedTickets]);
+  },[session,refreshAssignedTickets,refreshReadinessChecks]);
+
+  async function submitReadinessCheck(checkId,answers){
+    const {data,error}=await supabase.rpc("submit_my_readiness_check",{p_check_id:checkId,p_answers:answers});
+    if(error) throw error;
+    await refreshReadinessChecks(session);
+    if(data?.passed) await refreshAssignedTickets(session);
+    return data;
+  }
+
+  async function acknowledgeSafety(classId){
+    const {error}=await supabase.rpc("acknowledge_my_class_safety",{p_class_id:classId});
+    if(error) throw error;
+    await refreshReadinessChecks(session);
+  }
 
   async function saveCustomScenario(scenario) {
     if (scenario.id) {
@@ -466,6 +497,10 @@ export default function App() {
       {view==="my-tickets" && (
         <MyTickets session={session} tickets={[]} users={classStudents}
           assignedTickets={assignedTickets}
+          readinessChecks={readinessChecks}
+          safetyAcknowledgments={safetyAcknowledgments}
+          onSubmitReadiness={submitReadinessCheck}
+          onAcknowledgeSafety={acknowledgeSafety}
           initialAssigned={deepAssigned}
           onConsumeInitial={()=>setDeepAssigned(null)}
           onSaveNote={saveLabNote}
@@ -1217,7 +1252,58 @@ function StudentWorkflow({status}) {
   </div>;
 }
 
-function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange}) {
+function ReadinessStation({checks,onSubmit}) {
+  const pending=checks.filter(check=>!check.passed);
+  const [activeId,setActiveId]=useState(null);
+  const [answers,setAnswers]=useState({});
+  const [result,setResult]=useState(null);
+  const [submitting,setSubmitting]=useState(false);
+  // activeId is only a preference. Fall back to the first pending check so a
+  // late RPC response never renders an empty card, and hold a just-passed
+  // check on screen while its result is still displayed.
+  const active=pending.find(check=>check.check_id===activeId)
+    ||(result&&checks.find(check=>check.check_id===activeId))
+    ||pending[0];
+  if(pending.length===0&&!result) return null;
+
+  async function submit(){
+    if(!active||submitting) return;
+    setActiveId(active.check_id); setSubmitting(true); setResult(null);
+    try { setResult(await onSubmit(active.check_id,answers)); }
+    catch(error){ setResult({error:error?.message||"Readiness check could not be submitted."}); }
+    finally { setSubmitting(false); }
+  }
+
+  return <Card style={{marginBottom:28,border:"1px solid #E8922E55",background:"#181410"}}>
+    <SectionLabel>Preparation station</SectionLabel>
+    <h2 style={{margin:"0 0 6px",fontSize:19,color:"#F0EDE8"}}>Complete readiness before hands-on work</h2>
+    <p style={{margin:"0 0 18px",fontSize:12,color:"#8A7868",lineHeight:1.6}}>Score 80% or higher to release your own ticket. A retry never holds up prepared teammates.</p>
+    {(pending.length>1||(result&&pending.length>0))&&<div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>{pending.map(check=><button key={check.check_id} onClick={()=>{setActiveId(check.check_id);setAnswers({});setResult(null);}} style={{...btnGhost,borderColor:activeId===check.check_id?"#E8922E":"#2A2A2A",color:activeId===check.check_id?"#E8922E":"#8A7868"}}>{check.title}</button>)}</div>}
+    {active&&<>
+      <div style={{fontSize:14,fontWeight:700,color:"#EDE9E3",marginBottom:4}}>{active.title}</div>
+      {active.instructions&&<div style={{fontSize:12,color:"#8A7868",marginBottom:16}}>{active.instructions}</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>{active.questions.map((question,index)=><div key={question.id} style={{background:"#141414",border:"1px solid #242424",borderRadius:8,padding:14}}>
+        <div style={{fontSize:13,color:"#D8C8B8",marginBottom:10}}>{index+1}. {question.prompt}</div>
+        <div style={{display:"grid",gap:7}}>{question.options.map(option=><label key={option.id} style={{fontSize:12,color:"#A89888",display:"flex",gap:8,alignItems:"flex-start"}}><input type="radio" name={`${active.check_id}-${question.id}`} checked={answers[question.id]===option.id} onChange={()=>setAnswers(current=>({...current,[question.id]:option.id}))} style={{accentColor:"#E8922E"}} />{option.text}</label>)}</div>
+        {result?.feedback?.find(item=>item.id===question.id)&&<div style={{marginTop:10,fontSize:11,color:result.feedback.find(item=>item.id===question.id).correct?"#4ade80":"#fbbf24"}}>{result.feedback.find(item=>item.id===question.id).correct?"Correct. ":"Review: "}{result.feedback.find(item=>item.id===question.id).explanation}</div>}
+      </div>)}</div>
+      {result?.error&&<div role="alert" style={{color:"#f87171",fontSize:12,marginTop:12}}>{result.error}</div>}
+      {result&&!result.error&&<div role="status" style={{color:result.passed?"#4ade80":"#fbbf24",fontSize:13,marginTop:14,fontWeight:700}}>{result.passed?`Ready — ${result.score_percent}%. Your ticket is released.`:`${result.score_percent}%. Review the explanations, then try again.`}</div>}
+      <button onClick={submit} disabled={submitting||Object.keys(answers).length!==5||result?.passed} style={{...btnPrimary,width:"auto",marginTop:16,opacity:submitting||Object.keys(answers).length!==5?0.45:1}}>{submitting?"Checking…":active.attempt_count?"Retry readiness check":"Submit readiness check"}</button>
+    </>}
+  </Card>;
+}
+
+function SafetyAcknowledgment({session,acknowledgments,onAcknowledge}){
+  const [saving,setSaving]=useState(null);
+  const [error,setError]=useState("");
+  const pending=(session.classes||[]).filter(classRow=>!acknowledgments.some(row=>row.class_id===classRow.id));
+  if(pending.length===0) return null;
+  async function acknowledge(classId){setSaving(classId);setError("");try{await onAcknowledge(classId);}catch(reason){setError(reason?.message||"Acknowledgment failed.");}finally{setSaving(null);}}
+  return <Card style={{marginBottom:20,border:"1px solid #38bdf844"}}><SectionLabel>First-session safety acknowledgment</SectionLabel><p style={{fontSize:12,color:"#8A7868",lineHeight:1.6}}>After the instructor-led safety-equipment walkthrough, acknowledge each enrolled lab once.</p>{pending.map(classRow=><div key={classRow.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"8px 0"}}><span style={{fontSize:13,color:"#D8C8B8"}}>{classRow.name}</span><button onClick={()=>acknowledge(classRow.id)} disabled={saving===classRow.id} style={{...btnGhost,width:"auto"}}>{saving===classRow.id?"Saving…":"I completed the walkthrough"}</button></div>)}{error&&<div role="alert" style={{fontSize:11,color:"#f87171"}}>{error}</div>}</Card>;
+}
+
+function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],safetyAcknowledgments=[],initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange,onSubmitReadiness,onAcknowledgeSafety}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
@@ -1559,6 +1645,9 @@ function MyTickets({session,tickets,users,assignedTickets,initialAssigned,onCons
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
         <PageTitle title="My Tickets" sub={`${total} ticket${total!==1?"s":""}`} />
       </div>
+
+      <SafetyAcknowledgment session={session} acknowledgments={safetyAcknowledgments} onAcknowledge={onAcknowledgeSafety} />
+      <ReadinessStation checks={readinessChecks} onSubmit={onSubmitReadiness} />
 
       {/* Assigned tickets — same row style as TicketTable */}
       {hasAssigned && (
@@ -2098,7 +2187,7 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
 // nav item, tabbed like Admin Panel's Students/Clients split.
 // ═══════════════════════════════════════════════════════════════
 function LabsHub({session,classStudents,customScenarios,onActivate,onSaveScenario,onDeleteScenario,onImportScenarios}) {
-  const [tab,setTab]=useState("push"); // "push" | "library"
+  const [tab,setTab]=useState("push"); // "push" | "readiness" | "library"
   const tabBtn=(id,label)=>(
     <button onClick={()=>setTab(id)}
       style={{padding:"8px 18px",background:tab===id?"#E8922E":"transparent",
@@ -2111,13 +2200,96 @@ function LabsHub({session,classStudents,customScenarios,onActivate,onSaveScenari
     <div>
       <div style={{display:"flex",gap:4,background:"#1A1A1A",border:"1px solid #242424",borderRadius:8,padding:4,marginBottom:24,width:"fit-content"}}>
         {tabBtn("push","Push Labs")}
+        {tabBtn("readiness","Readiness Checks")}
         {tabBtn("library","Scenario Library")}
       </div>
-      {tab==="push"
-        ? <LabManager session={session} classStudents={classStudents} customScenarios={customScenarios} onActivate={onActivate} />
-        : <ScenarioLibrary customScenarios={customScenarios} onSave={onSaveScenario} onDelete={onDeleteScenario} onImport={onImportScenarios} />}
+      {tab==="push"&&<LabManager session={session} classStudents={classStudents} customScenarios={customScenarios} onActivate={onActivate} />}
+      {tab==="readiness"&&<ReadinessManager session={session} />}
+      {tab==="library"&&<ScenarioLibrary customScenarios={customScenarios} onSave={onSaveScenario} onDelete={onDeleteScenario} onImport={onImportScenarios} />}
     </div>
   );
+}
+
+const blankReadinessQuestions=()=>Array.from({length:5},(_,index)=>({
+  id:`q${index+1}`,prompt:"",correct:"a",explanation:"",
+  options:[{id:"a",text:""},{id:"b",text:""},{id:"c",text:""},{id:"d",text:""}],
+}));
+
+function ReadinessManager({session}){
+  const [assignments,setAssignments]=useState([]);
+  const [checks,setChecks]=useState([]);
+  const [selectedAssignment,setSelectedAssignment]=useState("");
+  const [form,setForm]=useState({id:null,title:"",instructions:"",status:"draft",questions:blankReadinessQuestions()});
+  const [preview,setPreview]=useState(false);
+  const [roster,setRoster]=useState([]);
+  const [saving,setSaving]=useState(false);
+  const [message,setMessage]=useState("");
+
+  const load=useCallback(async()=>{
+    const [assignmentRes,checkRes]=await Promise.all([
+      supabase.from("lab_assignments").select("id,class_id,week_label,assigned_at,classes(name,course_id)").order("assigned_at",{ascending:false}),
+      supabase.from("readiness_checks").select("*").order("created_at",{ascending:false}),
+    ]);
+    if(!assignmentRes.error) setAssignments(assignmentRes.data||[]);
+    if(!checkRes.error) setChecks(checkRes.data||[]);
+  },[]);
+  useEffect(()=>{load();},[load]);
+
+  function chooseAssignment(id){
+    setSelectedAssignment(id); setPreview(false); setMessage("");
+    const existing=checks.find(check=>check.assignment_id===id);
+    setForm(existing?{...existing,questions:existing.questions||blankReadinessQuestions()}:{id:null,title:"",instructions:"",status:"draft",questions:blankReadinessQuestions()});
+    setRoster([]);
+  }
+  useEffect(()=>{
+    if(!form.id){setRoster([]);return;}
+    supabase.rpc("readiness_roster",{p_check_id:form.id}).then(({data,error})=>{if(!error)setRoster(data||[]);});
+  },[form.id,form.status]);
+  function updateQuestion(index,key,value){setForm(current=>({...current,questions:current.questions.map((q,i)=>i===index?{...q,[key]:value}:q)}));}
+  function updateOption(questionIndex,optionIndex,value){setForm(current=>({...current,questions:current.questions.map((q,i)=>i===questionIndex?{...q,options:q.options.map((option,j)=>j===optionIndex?{...option,text:value}:option)}:q)}));}
+  const complete=Boolean(selectedAssignment&&form.title.trim()&&form.questions.every(q=>q.prompt.trim()&&q.explanation.trim()&&q.options.every(option=>option.text.trim())));
+
+  async function save(status){
+    if(!complete||saving) return;
+    // Dropping a published check back to draft removes the gate, releasing
+    // every student's ticket without a passing score.
+    if(status==="draft"&&form.status==="published"
+       &&!window.confirm("Saving this as a draft unpublishes the check and immediately releases every student's ticket, even for students who have not passed. Continue?")) return;
+    const assignment=assignments.find(item=>item.id===selectedAssignment);
+    setSaving(true); setMessage("");
+    const payload={assignment_id:selectedAssignment,class_id:assignment.class_id,title:form.title.trim(),instructions:form.instructions.trim(),status,passing_percent:80,questions:form.questions,created_by:session.id,published_at:status==="published"?new Date().toISOString():null,updated_at:new Date().toISOString()};
+    const operation=form.id
+      ? supabase.from("readiness_checks").update(payload).eq("id",form.id).select().single()
+      : supabase.from("readiness_checks").insert(payload).select().single();
+    const {data,error}=await operation;
+    if(error) setMessage(error.message);
+    else {setForm({...data,questions:data.questions||[]});setMessage(status==="published"?"Published. Assigned students now enter the preparation station.":"Draft saved.");await load();}
+    setSaving(false);
+  }
+
+  return <div style={{maxWidth:1000}}>
+    <PageTitle title="Readiness Checks" sub="Author five questions, preview the student view, and publish the gate for an assigned lab." />
+    <Field label="Lab assignment"><select value={selectedAssignment} onChange={event=>chooseAssignment(event.target.value)} style={inputStyle}><option value="">Select an assignment…</option>{assignments.map(item=><option key={item.id} value={item.id}>{item.classes?.name||"Class"} — {item.week_label}</option>)}</select></Field>
+    {!selectedAssignment&&<EmptyState msg="Push a lab, then select its assignment here to attach a readiness check." />}
+    {selectedAssignment&&<Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:18}}><SectionLabel>{form.id?`Editing ${form.status} check`:"New draft"}</SectionLabel><button onClick={()=>setPreview(value=>!value)} style={btnGhost}>{preview?"Edit":"Preview"}</button></div>
+      {preview?<div>
+        <h2 style={{color:"#F0EDE8",fontSize:19}}>{form.title||"Untitled readiness check"}</h2><p style={{color:"#8A7868",fontSize:12}}>{form.instructions}</p>
+        {form.questions.map((question,index)=><div key={question.id} style={{padding:"12px 0",borderTop:"1px solid #242424"}}><div style={{color:"#D8C8B8",fontSize:13,marginBottom:7}}>{index+1}. {question.prompt||"Question not written"}</div>{question.options.map(option=><div key={option.id} style={{fontSize:12,color:option.id===question.correct?"#4ade80":"#8A7868",padding:"2px 0"}}>{option.id.toUpperCase()}. {option.text||"Option not written"}</div>)}</div>)}
+      </div>:<>
+        <Field label="Title"><input value={form.title} onChange={event=>setForm(current=>({...current,title:event.target.value}))} style={inputStyle} placeholder="Week 1 Hardware readiness" /></Field>
+        <Field label="Instructions"><textarea value={form.instructions} onChange={event=>setForm(current=>({...current,instructions:event.target.value}))} style={{...inputStyle,minHeight:70}} placeholder="Review the safety station if you need another attempt." /></Field>
+        {form.questions.map((question,index)=><div key={question.id} style={{background:"#141414",border:"1px solid #242424",borderRadius:8,padding:16,marginBottom:12}}>
+          <Field label={`Question ${index+1}`}><input value={question.prompt} onChange={event=>updateQuestion(index,"prompt",event.target.value)} style={inputStyle} /></Field>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{question.options.map((option,optionIndex)=><div key={option.id} style={{display:"flex",gap:7,alignItems:"center"}}><input type="radio" name={`correct-${index}`} checked={question.correct===option.id} onChange={()=>updateQuestion(index,"correct",option.id)} style={{accentColor:"#E8922E"}}/><input value={option.text} onChange={event=>updateOption(index,optionIndex,event.target.value)} style={inputStyle} placeholder={`Option ${option.id.toUpperCase()}`} /></div>)}</div>
+          <Field label="Explanation shown after submission"><input value={question.explanation} onChange={event=>updateQuestion(index,"explanation",event.target.value)} style={inputStyle} /></Field>
+        </div>)}
+      </>}
+      {message&&<div role="status" style={{fontSize:12,color:message.includes("saved")||message.includes("Published")?"#4ade80":"#f87171",marginBottom:12}}>{message}</div>}
+      <div style={{display:"flex",gap:8}}><button onClick={()=>save("draft")} disabled={!complete||saving} style={{...btnGhost,opacity:complete?1:0.4}}>{form.status==="published"?"Unpublish to draft":"Save draft"}</button><button onClick={()=>save("published")} disabled={!complete||saving} style={{...btnPrimary,width:"auto",opacity:complete?1:0.4}}>{form.status==="published"?"Publish correction":"Publish check"}</button></div>
+    </Card>}
+    {form.id&&<Card style={{marginTop:16}}><SectionLabel>Student readiness</SectionLabel>{roster.length===0?<div style={{fontSize:12,color:"#6A5848"}}>No assigned students.</div>:<div style={{display:"grid",gap:7}}>{roster.map(student=><div key={student.student_id} style={{display:"grid",gridTemplateColumns:"1fr 110px 80px",gap:12,padding:"8px 0",borderBottom:"1px solid #242424",fontSize:12}}><span style={{color:"#D8C8B8"}}>{student.alias}</span><span style={{color:student.readiness_state==="ready"?"#4ade80":student.readiness_state==="preparing"?"#fbbf24":"#6A5848",textTransform:"capitalize"}}>{student.readiness_state}</span><span style={{color:"#8A7868",textAlign:"right"}}>{student.last_score==null?"—":`${student.last_score}%`}</span></div>)}</div>}</Card>}
+  </div>;
 }
 
 // ═══════════════════════════════════════════════════════════════
