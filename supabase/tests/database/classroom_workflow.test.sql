@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(53);
+select plan(58);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -170,11 +170,23 @@ reset role;
 
 select ok(not has_function_privilege('anon', 'public.submit_my_client_inquiry(uuid,uuid,text,text)', 'EXECUTE'), 'anonymous users cannot submit client inquiries');
 select ok(has_function_privilege('authenticated', 'public.submit_my_client_inquiry(uuid,uuid,text,text)', 'EXECUTE'), 'authenticated students may call the ownership-scoped inquiry RPC');
+select hasnt_column('public', 'assigned_tickets', 'client_responses', 'student-readable tickets do not contain the answer script');
+select hasnt_column('public', 'ticket_client_inquiries', 'response_quality', 'student inquiry history does not label answer quality');
+select ok(not has_table_privilege('authenticated', 'private.assigned_ticket_scripts', 'SELECT'), 'students cannot read the private answer scripts');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
-select lives_ok($$update public.assigned_tickets set inquiry_limit = 2, client_responses = '{"scope":{"response":"Only the desktop is affected.","quality":"exact"},"symptom_error":{"response":"It beeps sometimes, I think.","quality":"ambiguous"}}'::jsonb where id = '40000000-0000-0000-0000-000000000001'$$, 'instructor configures a ticket-specific response script');
+select lives_ok($$update public.assigned_tickets set inquiry_limit = 2 where id = '40000000-0000-0000-0000-000000000001'$$, 'instructor configures the ticket-specific inquiry limit');
+select throws_ok(
+  $$select public.create_lab_assignment_with_tickets('10000000-0000-0000-0000-000000000001','Invalid scripted assignment','[{"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"bad","course_id":"hw","week":1,"title":"Bad","description":"Bad","priority":"Medium","inquiry_limit":3}]'::jsonb)$$,
+  'P0001', 'incomplete_client_responses',
+  'an incomplete imported script is rejected atomically'
+);
+select is((select count(*)::integer from public.lab_assignments), 1, 'a rejected script does not leave an orphan assignment');
 reset role;
+
+insert into private.assigned_ticket_scripts (assigned_ticket_id, client_responses)
+values ('40000000-0000-0000-0000-000000000001','{"scope":{"response":"Only the desktop is affected.","quality":"exact"},"symptom_error":{"response":"It beeps sometimes, I think.","quality":"ambiguous"}}'::jsonb);
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);

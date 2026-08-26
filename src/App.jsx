@@ -403,31 +403,29 @@ export default function App() {
   async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId) {
     const scenario = SCENARIOS.find(s=>s.id===scenarioId)||customScenarios.find(s=>s.id===scenarioId);
     if (!scenario) return;
-    const { data: assignment, error } = await supabase.from("lab_assignments").insert({
-      class_id: classId || session.class_id,
-      week_label: `Week ${week} — ${scenario.title}`,
-      assigned_by: session.id,
-    }).select().single();
-    if (error || !assignment) { showToast("Failed to create assignment.","error"); return; }
 
     // Build rows — pairs share a group_tag
     const rows = mode==="pairs"
       ? studentIds.reduce((acc,sid,i)=>{
           const tag=`W${week}-pair${Math.floor(i/2)+1}`;
-          acc.push({assignment_id:assignment.id,student_id:sid,scenario_id:scenarioId,
+          acc.push({student_id:sid,scenario_id:scenarioId,
             course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-            description:scenario.description,priority:scenario.priority,status:"New",group_tag:tag,
+            description:scenario.description,priority:scenario.priority,group_tag:tag,
             inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{}});
           return acc;
         },[])
       : studentIds.map(sid=>({
-          assignment_id:assignment.id,student_id:sid,scenario_id:scenarioId,
+          student_id:sid,scenario_id:scenarioId,
           course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-          description:scenario.description,priority:scenario.priority,status:"New",group_tag:null,
+          description:scenario.description,priority:scenario.priority,group_tag:null,
           inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{},
         }));
 
-    const {error:rowsErr} = await supabase.from("assigned_tickets").insert(rows);
+    const {error:rowsErr} = await supabase.rpc("create_lab_assignment_with_tickets",{
+      p_class_id:classId||session.class_id,
+      p_week_label:`Week ${week} — ${scenario.title}`,
+      p_tickets:rows,
+    });
     if (rowsErr) { showToast("Push failed: "+rowsErr.message,"error"); return; }
     showToast(`Week ${week} lab pushed to ${studentIds.length} student(s)!`);
   }
@@ -1583,7 +1581,7 @@ function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],saf
               </div>
 
               <FieldJournalLink key={at.id} ticket={at} session={session} onSave={onSaveFieldJournal} />
-              <ClientInquiryPanel key={at.id} ticket={at} onSubmit={onSubmitClientInquiry} />
+              <ClientInquiryPanel ticket={at} onSubmit={onSubmitClientInquiry} />
 
               {/* Activity thread */}
               <div style={{marginTop:16,background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
@@ -2610,6 +2608,7 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
   const [filter,setFilter]     = useState("all");
   const [importing,setImporting] = useState(false);
   const [importErr,setImportErr] = useState("");
+  const [scenarioErr,setScenarioErr] = useState("");
   const [saving,setSaving]     = useState(false);
   const [form,setForm]         = useState(BLANK_SCENARIO);
 
@@ -2617,17 +2616,17 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
   const all = [...builtIn,...customScenarios];
   const filtered = filter==="all" ? all : filter==="custom" ? customScenarios : all.filter(s=>s.course_id===filter||s.courseId===filter);
 
-  function startNew()  { setForm({...BLANK_SCENARIO,clientResponses:emptyClientResponses()}); setEditing("new"); }
-  function startEdit(s){ setForm({...BLANK_SCENARIO,...s,clientResponses:{...emptyClientResponses(),...(s.clientResponses||{})}}); setEditing(s); }
-  function cancel()    { setEditing(null); setImporting(false); setImportErr(""); }
+  function startNew()  { setScenarioErr(""); setForm({...BLANK_SCENARIO,clientResponses:emptyClientResponses()}); setEditing("new"); }
+  function startEdit(s){ setScenarioErr(""); setForm({...BLANK_SCENARIO,...s,clientResponses:{...emptyClientResponses(),...(s.clientResponses||{})}}); setEditing(s); }
+  function cancel()    { setEditing(null); setImporting(false); setImportErr(""); setScenarioErr(""); }
 
   async function handleSave() {
     if (!form.title.trim() || !form.description.trim()) return;
     if(Number(form.inquiryLimit)>0&&CLIENT_INQUIRY_PURPOSES.some(([key])=>!form.clientResponses?.[key]?.response?.trim())) {
-      setImportErr("Author a client response for every purpose before saving an inquiry-enabled scenario.");
+      setScenarioErr("Author a client response for every purpose before saving an inquiry-enabled scenario.");
       return;
     }
-    setImportErr("");
+    setScenarioErr("");
     setSaving(true);
     const ok = await onSave(editing==="new" ? form : {...form, id: editing.id});
     setSaving(false);
@@ -2655,8 +2654,13 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
         const required = ["title","course_id","week","priority","mode","description"];
         const missing = rows.findIndex(r=>required.some(k=>!r[k]));
         if (missing>=0) throw new Error(`Row ${missing+1} is missing required fields.`);
-        rows = rows.map(r=>({...r, week:parseInt(r.week)||1,
-          categories: r.categories ? (Array.isArray(r.categories)?r.categories:r.categories.split(";").map(c=>c.trim())) : []}));
+        rows = rows.map((r,index)=>{
+          const inquiryLimit=Number(r.inquiryLimit||0);
+          if(!Number.isInteger(inquiryLimit)||inquiryLimit<0||inquiryLimit>3) throw new Error(`Row ${index+1} has an inquiry limit outside 0–3.`);
+          if(inquiryLimit>0&&CLIENT_INQUIRY_PURPOSES.some(([key])=>!r.clientResponses?.[key]?.response?.trim()||!CLIENT_RESPONSE_QUALITIES.some(([quality])=>quality===(r.clientResponses?.[key]?.quality||"")))) throw new Error(`Row ${index+1} must author all six client responses and response qualities.`);
+          return {...r,week:parseInt(r.week)||1,inquiryLimit,
+            categories:r.categories?(Array.isArray(r.categories)?r.categories:r.categories.split(";").map(c=>c.trim())):[]};
+        });
         setImportErr(""); onImport(rows); setImporting(false);
       } catch(err) { setImportErr(err.message); }
     };
@@ -2765,7 +2769,7 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
                   <select aria-label={`${label} response quality`} value={scripted.quality} onChange={e=>setForm(f=>({...f,clientResponses:{...(f.clientResponses||{}),[key]:{...scripted,quality:e.target.value}}}))} style={{...inputStyle,marginTop:8}}>{CLIENT_RESPONSE_QUALITIES.map(([value,name])=><option key={value} value={value}>{name}</option>)}</select>
                 </div>;
               })}</div>}
-              {importErr&&<div role="alert" style={{fontSize:11,color:"#f87171",marginTop:10}}>{importErr}</div>}
+              {scenarioErr&&<div role="alert" style={{fontSize:11,color:"#f87171",marginTop:10}}>{scenarioErr}</div>}
             </div>
 
             <div style={{display:"flex",gap:10}}>
