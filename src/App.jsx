@@ -147,6 +147,15 @@ function DetailRow({label,val}){return(<div style={{display:"flex",justifyConten
 function EmptyState({msg}){return <div style={{background:"#1A1A1A",border:"1px solid #242424",borderRadius:12,padding:40,textAlign:"center",color:"#6A5848",fontSize:14}}>{msg}</div>;}
 function Toast({msg,type}){return(<div style={{position:"fixed",bottom:24,right:24,background:type==="success"?"#166534":"#7f1d1d",border:"1px solid "+(type==="success"?"#22c55e44":"#ef444444"),color:"#F0EDE8",borderRadius:8,padding:"12px 20px",fontSize:13,zIndex:9999,fontFamily:"'Inter',sans-serif",boxShadow:"0 8px 24px #000a",animation:"toast-in .2s ease"}}>{msg}</div>);}
 
+const CLIENT_INQUIRY_PURPOSES = [
+  ["scope","Scope"],["timing_change","Timing or change"],["symptom_error","Symptom or error"],
+  ["environment_equipment","Environment or equipment"],["prior_troubleshooting","Prior troubleshooting"],["impact_urgency","Impact or urgency"],
+];
+const CLIENT_RESPONSE_QUALITIES = [
+  ["exact","Exact"],["ambiguous","Ambiguous"],["mistaken","Mistaken"],["no_useful_information","No useful information"],
+];
+const emptyClientResponses = () => Object.fromEntries(CLIENT_INQUIRY_PURPOSES.map(([key])=>[key,{response:"",quality:"exact"}]));
+
 
 // ═══════════════════════════════════════════════════════════════
 // APP ROOT
@@ -169,7 +178,7 @@ export default function App() {
   const refreshAssignedTickets = useCallback(async currentSession => {
     if (!currentSession) return;
     let query = supabase.from("assigned_tickets")
-      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(*), ticket_status_history(changed_at), ticket_verification_reviews(action, feedback, manual_checked, created_at, reviewer_alias)")
+      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(*), ticket_status_history(changed_at), ticket_verification_reviews(action, feedback, manual_checked, created_at, reviewer_alias), ticket_client_inquiries(*)")
       .order("created_at",{ascending:false});
     if (currentSession.role !== "admin") query = query.eq("student_id",currentSession.id);
     const {data,error} = await query;
@@ -328,6 +337,15 @@ export default function App() {
     return data;
   }
 
+  async function submitClientInquiry(ticketId,requestId,question,purpose){
+    const {data,error}=await supabase.rpc("submit_my_client_inquiry",{
+      p_assigned_ticket_id:ticketId,p_request_id:requestId,p_question:question,p_purpose:purpose,
+    });
+    if(error) throw error;
+    await refreshAssignedTickets(session);
+    return data;
+  }
+
   async function acknowledgeSafety(classId){
     const {error}=await supabase.rpc("acknowledge_my_class_safety",{p_class_id:classId});
     if(error) throw error;
@@ -383,31 +401,31 @@ export default function App() {
   }
 
   async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId) {
-    const scenario = SCENARIOS.find(s=>s.id===scenarioId);
+    const scenario = SCENARIOS.find(s=>s.id===scenarioId)||customScenarios.find(s=>s.id===scenarioId);
     if (!scenario) return;
-    const { data: assignment, error } = await supabase.from("lab_assignments").insert({
-      class_id: classId || session.class_id,
-      week_label: `Week ${week} — ${scenario.title}`,
-      assigned_by: session.id,
-    }).select().single();
-    if (error || !assignment) { showToast("Failed to create assignment.","error"); return; }
 
     // Build rows — pairs share a group_tag
     const rows = mode==="pairs"
       ? studentIds.reduce((acc,sid,i)=>{
           const tag=`W${week}-pair${Math.floor(i/2)+1}`;
-          acc.push({assignment_id:assignment.id,student_id:sid,scenario_id:scenarioId,
+          acc.push({student_id:sid,scenario_id:scenarioId,
             course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-            description:scenario.description,priority:scenario.priority,status:"New",group_tag:tag});
+            description:scenario.description,priority:scenario.priority,group_tag:tag,
+            inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{}});
           return acc;
         },[])
       : studentIds.map(sid=>({
-          assignment_id:assignment.id,student_id:sid,scenario_id:scenarioId,
+          student_id:sid,scenario_id:scenarioId,
           course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-          description:scenario.description,priority:scenario.priority,status:"New",group_tag:null,
+          description:scenario.description,priority:scenario.priority,group_tag:null,
+          inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{},
         }));
 
-    const {error:rowsErr} = await supabase.from("assigned_tickets").insert(rows);
+    const {error:rowsErr} = await supabase.rpc("create_lab_assignment_with_tickets",{
+      p_class_id:classId||session.class_id,
+      p_week_label:`Week ${week} — ${scenario.title}`,
+      p_tickets:rows,
+    });
     if (rowsErr) { showToast("Push failed: "+rowsErr.message,"error"); return; }
     showToast(`Week ${week} lab pushed to ${studentIds.length} student(s)!`);
   }
@@ -500,6 +518,7 @@ export default function App() {
           readinessChecks={readinessChecks}
           safetyAcknowledgments={safetyAcknowledgments}
           onSubmitReadiness={submitReadinessCheck}
+          onSubmitClientInquiry={submitClientInquiry}
           onAcknowledgeSafety={acknowledgeSafety}
           initialAssigned={deepAssigned}
           onConsumeInitial={()=>setDeepAssigned(null)}
@@ -1303,7 +1322,41 @@ function SafetyAcknowledgment({session,acknowledgments,onAcknowledge}){
   return <Card style={{marginBottom:20,border:"1px solid #38bdf844"}}><SectionLabel>First-session safety acknowledgment</SectionLabel><p style={{fontSize:12,color:"#8A7868",lineHeight:1.6}}>After the instructor-led safety-equipment walkthrough, acknowledge each enrolled lab once.</p>{pending.map(classRow=><div key={classRow.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"8px 0"}}><span style={{fontSize:13,color:"#D8C8B8"}}>{classRow.name}</span><button onClick={()=>acknowledge(classRow.id)} disabled={saving===classRow.id} style={{...btnGhost,width:"auto"}}>{saving===classRow.id?"Saving…":"I completed the walkthrough"}</button></div>)}{error&&<div role="alert" style={{fontSize:11,color:"#f87171"}}>{error}</div>}</Card>;
 }
 
-function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],safetyAcknowledgments=[],initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange,onSubmitReadiness,onAcknowledgeSafety}) {
+function ClientInquiryPanel({ticket,onSubmit}) {
+  const history=[...(ticket.ticket_client_inquiries||[])].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const limit=Number(ticket.inquiry_limit||0);
+  const [question,setQuestion]=useState("");
+  const [purpose,setPurpose]=useState("");
+  const [requestId,setRequestId]=useState(()=>crypto.randomUUID());
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState("");
+  const remaining=Math.max(0,limit-history.length);
+  if(limit===0) return null;
+  async function submit(){
+    if(!question.trim()||!purpose||saving||remaining===0) return;
+    setSaving(true);setError("");
+    try { await onSubmit(ticket.id,requestId,question,purpose); setQuestion("");setPurpose("");setRequestId(crypto.randomUUID()); }
+    catch(reason){ setError(reason?.message?.includes("inquiry_limit_reached")?"This ticket's inquiry limit has been reached.":reason?.message||"The inquiry was not sent."); }
+    finally { setSaving(false); }
+  }
+  return <div style={{marginTop:16,background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,padding:18}}>
+    <div style={{display:"flex",justifyContent:"space-between",gap:12,marginBottom:8}}><SectionLabel>Client inquiries</SectionLabel><span style={{fontSize:11,color:"#8A7868"}}>{history.length} of {limit} used</span></div>
+    <p style={{margin:"0 0 14px",fontSize:12,color:"#8A7868",lineHeight:1.55}}>Ask only when the answer will change your triage. Write the question before identifying its purpose.</p>
+    {history.map(item=><div key={item.id} style={{borderLeft:"2px solid #E8922E",paddingLeft:12,marginBottom:14,fontSize:12,lineHeight:1.55}}>
+      <div style={{color:"#D8C8B8",fontWeight:600}}>You: {item.question}</div>
+      <div style={{color:"#6A5848",fontSize:10,margin:"2px 0 5px"}}>{CLIENT_INQUIRY_PURPOSES.find(([key])=>key===item.purpose)?.[1]} · {fmt(item.created_at)}</div>
+      <div style={{color:"#B8A898"}}>Client: {item.response}</div>
+    </div>)}
+    {remaining>0?<>
+      <textarea value={question} maxLength={500} onChange={event=>{setQuestion(event.target.value);if(!event.target.value.trim())setPurpose("");}} placeholder="Write your question to the client…" style={{...inputStyle,minHeight:72,resize:"vertical"}} />
+      <select aria-label="Inquiry purpose" value={purpose} disabled={!question.trim()} onChange={event=>setPurpose(event.target.value)} style={{...inputStyle,marginTop:9,opacity:question.trim()?1:0.45}}><option value="">Select the question's purpose…</option>{CLIENT_INQUIRY_PURPOSES.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select>
+      {error&&<div role="alert" style={{fontSize:11,color:"#f87171",marginTop:8}}>{error}</div>}
+      <button onClick={submit} disabled={!question.trim()||!purpose||saving} style={{...btnPrimary,width:"auto",marginTop:10,opacity:!question.trim()||!purpose||saving?0.45:1}}>{saving?"Sending…":`Ask client · ${remaining} remaining`}</button>
+    </>:<div style={{fontSize:11,color:"#6A5848"}}>Inquiry limit reached. Continue triage with the evidence you have.</div>}
+  </div>;
+}
+
+function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],safetyAcknowledgments=[],initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange,onSubmitReadiness,onSubmitClientInquiry,onAcknowledgeSafety}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
@@ -1528,6 +1581,7 @@ function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],saf
               </div>
 
               <FieldJournalLink key={at.id} ticket={at} session={session} onSave={onSaveFieldJournal} />
+              <ClientInquiryPanel ticket={at} onSubmit={onSubmitClientInquiry} />
 
               {/* Activity thread */}
               <div style={{marginTop:16,background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
@@ -1813,6 +1867,7 @@ function AssignmentQueue({tickets,students,onReview}) {
                   <DetailRow label="Last activity" val={fmt(new Date(lastActivity(ticket)).toISOString())}/>
                 </div>
                 {journalLink?.client_resolution&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>Client-facing resolution</div><div style={{fontSize:12,color:"#B8A898",lineHeight:1.5}}>{journalLink.client_resolution}</div></div>}
+                {(ticket.ticket_client_inquiries||[]).length>0&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Client inquiry history</div>{[...ticket.ticket_client_inquiries].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).map(item=><div key={item.id} style={{fontSize:11,lineHeight:1.5,marginBottom:9,borderLeft:"2px solid #E8922E",paddingLeft:9}}><div style={{color:"#D8C8B8"}}>Student: {item.question}</div><div style={{color:"#8A7868"}}>Client: {item.response}</div><div style={{color:"#4A4038",fontSize:9}}>{CLIENT_INQUIRY_PURPOSES.find(([key])=>key===item.purpose)?.[1]} · {fmt(item.created_at)}</div></div>)}</div>}
                 {review?.feedback&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:14}}>Last {review.action.toLowerCase()} feedback: {review.feedback}</div>}
                 {(ticket.status==="Verification"||ticket.status==="Closed")&&<>
                   {ticket.status==="Verification"&&<label style={{display:"flex",gap:9,alignItems:"center",fontSize:12,color:"#D8C8B8",marginBottom:12}}><input type="checkbox" checked={manualChecked} onChange={event=>setManualChecked(event.target.checked)}/> I checked the student’s printed Service Log entry.</label>}
@@ -2535,11 +2590,11 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
 const BLANK_SCENARIO = {
   title:"", course_id:"net", week:1, priority:"Medium",
   mode:"broadcast", categories:[], requesterId:"",
-  description:"", instructorNotes:"",
+  description:"", instructorNotes:"", inquiryLimit:0, clientResponses:emptyClientResponses(),
 };
 
-function toTicketTemplateRow({requesterId="",instructorNotes="",scenario:storedScenario,...row}) {
-  return {...row,scenario:{...(storedScenario||{}),requesterId,instructorNotes}};
+function toTicketTemplateRow({requesterId="",instructorNotes="",inquiryLimit=0,clientResponses={},scenario:storedScenario,...row}) {
+  return {...row,scenario:{...(storedScenario||{}),requesterId,instructorNotes,inquiryLimit:Number(inquiryLimit),clientResponses}};
 }
 
 function fromTicketTemplateRow(row) {
@@ -2553,6 +2608,7 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
   const [filter,setFilter]     = useState("all");
   const [importing,setImporting] = useState(false);
   const [importErr,setImportErr] = useState("");
+  const [scenarioErr,setScenarioErr] = useState("");
   const [saving,setSaving]     = useState(false);
   const [form,setForm]         = useState(BLANK_SCENARIO);
 
@@ -2560,12 +2616,17 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
   const all = [...builtIn,...customScenarios];
   const filtered = filter==="all" ? all : filter==="custom" ? customScenarios : all.filter(s=>s.course_id===filter||s.courseId===filter);
 
-  function startNew()  { setForm({...BLANK_SCENARIO}); setEditing("new"); }
-  function startEdit(s){ setForm({...BLANK_SCENARIO,...s}); setEditing(s); }
-  function cancel()    { setEditing(null); setImporting(false); setImportErr(""); }
+  function startNew()  { setScenarioErr(""); setForm({...BLANK_SCENARIO,clientResponses:emptyClientResponses()}); setEditing("new"); }
+  function startEdit(s){ setScenarioErr(""); setForm({...BLANK_SCENARIO,...s,clientResponses:{...emptyClientResponses(),...(s.clientResponses||{})}}); setEditing(s); }
+  function cancel()    { setEditing(null); setImporting(false); setImportErr(""); setScenarioErr(""); }
 
   async function handleSave() {
     if (!form.title.trim() || !form.description.trim()) return;
+    if(Number(form.inquiryLimit)>0&&CLIENT_INQUIRY_PURPOSES.some(([key])=>!form.clientResponses?.[key]?.response?.trim())) {
+      setScenarioErr("Author a client response for every purpose before saving an inquiry-enabled scenario.");
+      return;
+    }
+    setScenarioErr("");
     setSaving(true);
     const ok = await onSave(editing==="new" ? form : {...form, id: editing.id});
     setSaving(false);
@@ -2593,8 +2654,13 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
         const required = ["title","course_id","week","priority","mode","description"];
         const missing = rows.findIndex(r=>required.some(k=>!r[k]));
         if (missing>=0) throw new Error(`Row ${missing+1} is missing required fields.`);
-        rows = rows.map(r=>({...r, week:parseInt(r.week)||1,
-          categories: r.categories ? (Array.isArray(r.categories)?r.categories:r.categories.split(";").map(c=>c.trim())) : []}));
+        rows = rows.map((r,index)=>{
+          const inquiryLimit=Number(r.inquiryLimit||0);
+          if(!Number.isInteger(inquiryLimit)||inquiryLimit<0||inquiryLimit>3) throw new Error(`Row ${index+1} has an inquiry limit outside 0–3.`);
+          if(inquiryLimit>0&&CLIENT_INQUIRY_PURPOSES.some(([key])=>!r.clientResponses?.[key]?.response?.trim()||!CLIENT_RESPONSE_QUALITIES.some(([quality])=>quality===(r.clientResponses?.[key]?.quality||"")))) throw new Error(`Row ${index+1} must author all six client responses and response qualities.`);
+          return {...r,week:parseInt(r.week)||1,inquiryLimit,
+            categories:r.categories?(Array.isArray(r.categories)?r.categories:r.categories.split(";").map(c=>c.trim())):[]};
+        });
         setImportErr(""); onImport(rows); setImporting(false);
       } catch(err) { setImportErr(err.message); }
     };
@@ -2688,6 +2754,24 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
                 placeholder="Describe the physical equipment task, learning objectives, and what students should document in their Field Journal." />
             </Field>
 
+            <div style={{borderTop:"1px solid #242424",paddingTop:18,marginTop:6}}>
+              <SectionLabel>Scripted client inquiries</SectionLabel>
+              <Field label="Ticket inquiry limit">
+                <select value={form.inquiryLimit||0} onChange={e=>setForm(f=>({...f,inquiryLimit:Number(e.target.value)}))} style={inputStyle}>
+                  <option value={0}>Disabled</option><option value={1}>1 inquiry</option><option value={2}>2 inquiries</option><option value={3}>3 inquiries</option>
+                </select>
+              </Field>
+              {Number(form.inquiryLimit)>0&&<div style={{display:"flex",flexDirection:"column",gap:12}}>{CLIENT_INQUIRY_PURPOSES.map(([key,label])=>{
+                const scripted=form.clientResponses?.[key]||{response:"",quality:"exact"};
+                return <div key={key} style={{background:"#0D0D0D",border:"1px solid #242424",borderRadius:8,padding:12}}>
+                  <div style={{fontSize:11,color:"#D8C8B8",fontWeight:700,marginBottom:8}}>{label}</div>
+                  <textarea aria-label={`${label} scripted response`} value={scripted.response} onChange={e=>setForm(f=>({...f,clientResponses:{...(f.clientResponses||{}),[key]:{...scripted,response:e.target.value}}}))} style={{...inputStyle,minHeight:64,resize:"vertical"}} placeholder="The client's automatic reply…" />
+                  <select aria-label={`${label} response quality`} value={scripted.quality} onChange={e=>setForm(f=>({...f,clientResponses:{...(f.clientResponses||{}),[key]:{...scripted,quality:e.target.value}}}))} style={{...inputStyle,marginTop:8}}>{CLIENT_RESPONSE_QUALITIES.map(([value,name])=><option key={value} value={value}>{name}</option>)}</select>
+                </div>;
+              })}</div>}
+              {scenarioErr&&<div role="alert" style={{fontSize:11,color:"#f87171",marginTop:10}}>{scenarioErr}</div>}
+            </div>
+
             <div style={{display:"flex",gap:10}}>
               <button onClick={handleSave}
                 disabled={saving||!form.title.trim()||!form.description.trim()}
@@ -2726,6 +2810,7 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
                   <div style={{fontSize:11,color:"#A89888",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{form.instructorNotes}</div>
                 </div>
               )}
+              {Number(form.inquiryLimit)>0&&<div style={{borderTop:"1px solid #1A1A1A",padding:"12px 16px",background:"#101010"}}><div style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.12em",color:"#E8922E",marginBottom:8,fontWeight:700}}>Client response preview · {form.inquiryLimit} allowed</div>{CLIENT_INQUIRY_PURPOSES.map(([key,label])=><div key={key} style={{fontSize:10,color:"#8A7868",marginBottom:6}}><span style={{color:"#B8A898",fontWeight:600}}>{label}:</span> {form.clientResponses?.[key]?.response||"Not authored"} <span style={{color:"#4A4038"}}>({form.clientResponses?.[key]?.quality||"exact"})</span></div>)}</div>}
             </div>
             {/* Badge preview */}
             <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
