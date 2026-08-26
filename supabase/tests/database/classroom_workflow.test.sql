@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(75);
+select plan(90);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -376,6 +376,79 @@ select lives_ok(
 select is(
   (select count(*)::integer from public.assigned_tickets where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null) and status='Closed'),
   2, 'every team child ticket can reach Closed'
+);
+reset role;
+
+select has_table(
+  'private', 'builtin_scenario_secrets',
+  'built-in answer keys live outside the public schema'
+);
+select ok(
+  not has_table_privilege('authenticated', 'private.builtin_scenario_secrets', 'SELECT'),
+  'authenticated browsers cannot select built-in answer keys'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select throws_ok(
+  $$select * from public.get_builtin_scenario_instructor_notes()$$,
+  '42501', 'admin_required',
+  'students cannot retrieve instructor notes'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select is(
+  (select count(*)::integer from public.get_builtin_scenario_instructor_notes()),
+  37,
+  'instructors receive notes for every built-in scenario without client scripts'
+);
+select lives_ok($$
+  select public.create_lab_assignment_with_tickets(
+    '10000000-0000-0000-0000-000000000001', 'Private built-in script probe',
+    '[{"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"sc-hw-f26-05","course_id":"hw","week":5,"title":"Private script probe","description":"Safe browser payload.","priority":"High","inquiry_limit":2}]'::jsonb
+  )
+$$, 'assignment creation resolves built-in client scripts without receiving them from the browser');
+reset role;
+
+select has_table('private','ticket_template_secrets','custom template secrets live outside the public schema');
+select ok(exists(select 1 from pg_constraint where conname='ticket_templates_public_scenario_check'),'public template JSON rejects secret keys even for direct admin writes');
+select ok(not has_table_privilege('authenticated','private.ticket_template_secrets','SELECT'),'students cannot select custom template secrets');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000001',true);
+select throws_ok($$select * from public.get_custom_ticket_templates()$$,'42501','admin_required','students cannot call the custom template authoring view');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000003',true);
+select lives_ok($$
+  select * from public.save_custom_ticket_templates('[{
+    "id":"custom-secret-probe","title":"Custom private probe","description":"Safe public description","priority":"Medium","categories":["Component Failure"],"course_id":"hw","week":6,"mode":"individual",
+    "scenario":{"requesterId":"cmw-cody","instructorNotes":"SETUP: LOOSE CPU POWER LEAD","inquiryLimit":2,"clientResponses":{
+      "scope":{"response":"CUSTOM-scope","quality":"exact"},"timing_change":{"response":"CUSTOM-timing","quality":"ambiguous"},
+      "symptom_error":{"response":"CUSTOM-symptom","quality":"exact"},"environment_equipment":{"response":"CUSTOM-equipment","quality":"exact"},
+      "prior_troubleshooting":{"response":"CUSTOM-SECRET-prior","quality":"mistaken"},"impact_urgency":{"response":"CUSTOM-impact","quality":"exact"}
+    }}
+  }]'::jsonb)
+$$,'an instructor saves custom metadata and secrets atomically');
+select is((select scenario->>'instructorNotes' from public.ticket_templates where id='custom-secret-probe'),null,'the public template JSON contains no instructor notes');
+select is((select value->'scenario'->>'instructorNotes' from public.get_custom_ticket_templates() item(value) where value->>'id'='custom-secret-probe'),'SETUP: LOOSE CPU POWER LEAD','the admin RPC returns retained instructor notes');
+select lives_ok($$
+  select public.create_lab_assignment_with_tickets(
+    '10000000-0000-0000-0000-000000000001','Custom private script probe',
+    '[{"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"custom-secret-probe","course_id":"hw","week":6,"title":"Custom private probe","description":"Safe browser payload","priority":"Medium","inquiry_limit":2}]'::jsonb
+  )
+$$,'custom assignment creation resolves scripts without trusting a browser payload');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000001',true);
+select is((select scenario->>'clientResponses' from public.ticket_templates where id='custom-secret-probe'),null,'student-readable template JSON contains no client scripts');
+select is(
+  (public.submit_my_client_inquiry((select id from public.assigned_tickets where scenario_id='custom-secret-probe'),'90000000-0000-0000-0000-000000000001','What was tried already?','prior_troubleshooting')).response,
+  'CUSTOM-SECRET-prior','a custom inquiry retrieves only the selected private response end to end'
 );
 reset role;
 

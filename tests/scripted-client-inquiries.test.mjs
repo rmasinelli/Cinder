@@ -7,11 +7,19 @@ const migration = readFileSync(
   new URL("../supabase/migrations/20260826180023_scripted_client_inquiries.sql", import.meta.url),
   "utf8",
 );
+const customMigration = readFileSync(
+  new URL("../supabase/migrations/20260826204955_protect_custom_template_secrets.sql", import.meta.url),
+  "utf8",
+);
 
 test("client replies are authored and snapshotted without an AI response path", () => {
   assert.match(app, /Scripted client inquiries/);
   assert.match(app, /Client response preview/);
-  assert.match(app, /client_responses:scenario\.clientResponses/);
+  assert.match(app, /save_custom_ticket_templates/);
+  assert.doesNotMatch(app, /client_responses:scenario\.clientResponses/);
+  assert.match(customMigration, /create table private\.ticket_template_secrets/);
+  assert.match(customMigration, /v_scenario-'instructorNotes'-'clientResponses'/);
+  assert.match(customMigration, /ticket_templates_public_scenario_check/);
   assert.match(migration, /create table if not exists private\.assigned_ticket_scripts/);
   assert.doesNotMatch(migration, /alter table public\.assigned_tickets[\s\S]{0,150}client_responses/);
   assert.doesNotMatch(app, /openai|anthropic|generateClientResponse/i);
@@ -47,4 +55,5 @@ test("scenario imports and assignment creation validate scripts atomically", () 
   assert.match(app, /supabase\.rpc\("create_lab_assignment_with_tickets"/);
   assert.doesNotMatch(app, /from\("lab_assignments"\)\.insert/);
   assert.match(migration, /if not private\.valid_client_responses\(v_limit, v_responses\)/);
+  assert.doesNotMatch(customMigration, /v_ticket->'client_responses'/);
 });

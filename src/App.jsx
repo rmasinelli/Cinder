@@ -172,6 +172,7 @@ export default function App() {
   const [readinessChecks,setReadinessChecks] = useState([]);
   const [safetyAcknowledgments,setSafetyAcknowledgments] = useState([]);
   const [customScenarios,setCustomScenarios] = useState([]);
+  const [builtinInstructorNotes,setBuiltinInstructorNotes] = useState({});
   const [showOnboarding,setShowOnboarding]   = useState(false);
   const [deepAssigned,setDeepAssigned]       = useState(null); // assigned ticket id to auto-open in MyTickets
 
@@ -308,8 +309,16 @@ export default function App() {
         }
         setClassStudents(all);
       });
-      supabase.from("ticket_templates").select("*").order("course_id").order("week")
-        .then(({data})=>{ if(data) setCustomScenarios(data.map(fromTicketTemplateRow)); });
+      supabase.rpc("get_custom_ticket_templates")
+        .then(({data,error})=>{
+          if(error) console.error("custom scenario load error:",error);
+          else setCustomScenarios((data||[]).map(fromTicketTemplateRow));
+        });
+      supabase.rpc("get_builtin_scenario_instructor_notes")
+        .then(({data,error})=>{
+          if(error) console.error("built-in instructor notes load error:",error);
+          else setBuiltinInstructorNotes(Object.fromEntries((data||[]).map(item=>[item.scenario_id,item.instructor_notes])));
+        });
     }
 
     refreshAssignedTickets(session);
@@ -353,22 +362,16 @@ export default function App() {
   }
 
   async function saveCustomScenario(scenario) {
-    if (scenario.id) {
-      const {error} = await supabase.from("ticket_templates").update(toTicketTemplateRow(scenario)).eq("id",scenario.id);
-      if (error) { showToast("Save failed: "+error.message,"error"); return false; }
-      setCustomScenarios(prev=>prev.map(s=>s.id===scenario.id?scenario:s));
-    } else {
-      const id = "cst-"+Date.now();
-      const {data,error} = await supabase.from("ticket_templates").insert({...toTicketTemplateRow(scenario),id}).select().single();
-      if (error) { showToast("Save failed: "+error.message,"error"); return false; }
-      setCustomScenarios(prev=>[...prev,fromTicketTemplateRow(data)]);
-    }
+    const id=scenario.id||"cst-"+Date.now();
+    const {data,error}=await supabase.rpc("save_custom_ticket_templates",{p_templates:[{...toTicketTemplateRow(scenario),id}]});
+    if(error){showToast("Save failed: "+error.message,"error");return false;}
+    setCustomScenarios((data||[]).map(fromTicketTemplateRow));
     showToast("Scenario saved.");
     return true;
   }
 
   async function deleteCustomScenario(id) {
-    const {error} = await supabase.from("ticket_templates").delete().eq("id",id);
+    const {error} = await supabase.rpc("delete_custom_ticket_template",{p_template_id:id});
     if (error) { showToast("Delete failed: "+error.message,"error"); return; }
     setCustomScenarios(prev=>prev.filter(s=>s.id!==id));
     showToast("Scenario deleted.");
@@ -394,10 +397,10 @@ export default function App() {
 
   async function importScenarios(rows) {
     const timestamped = rows.map((r,i)=>({...toTicketTemplateRow(r), id:"cst-"+Date.now()+"-"+i}));
-    const {data,error} = await supabase.from("ticket_templates").insert(timestamped).select();
+    const {data,error} = await supabase.rpc("save_custom_ticket_templates",{p_templates:timestamped});
     if (error) { showToast("Import failed: "+error.message,"error"); return; }
-    setCustomScenarios(prev=>[...prev,...data.map(fromTicketTemplateRow)]);
-    showToast(`Imported ${data.length} scenario(s).`);
+    setCustomScenarios((data||[]).map(fromTicketTemplateRow));
+    showToast(`Imported ${rows.length} scenario(s).`);
   }
 
   async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId, requestedTeamSize=3) {
@@ -420,7 +423,7 @@ export default function App() {
           student_id:sid,scenario_id:scenarioId,
           course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
           description:scenario.description,priority:scenario.priority,group_tag:teamKey,
-          inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{},
+          inquiry_limit:Number(scenario.inquiryLimit||0),
           team_key:teamKey,team_name:teamKey?`${color[0]} Team ${teamIndex+1}`:null,
           color_name:color?.[0]||null,color_hex:color?.[1]||null,
           team_role:teamKey?roles[((i-teamIndex*teamSize)+week-1)%roles.length]:null,
@@ -554,6 +557,7 @@ export default function App() {
         <LabsHub
           session={session} classStudents={classStudents}
           customScenarios={customScenarios}
+          builtinInstructorNotes={builtinInstructorNotes}
           onActivate={pushLabAssignment}
           onSaveScenario={saveCustomScenario}
           onDeleteScenario={deleteCustomScenario}
@@ -2282,7 +2286,7 @@ function TicketDetail({ticket,session,users,onUpdate,onBack}) {
 // LABS — combines Lab Manager (push) + Scenario Library under one
 // nav item, tabbed like Admin Panel's Students/Clients split.
 // ═══════════════════════════════════════════════════════════════
-function LabsHub({session,classStudents,customScenarios,onActivate,onSaveScenario,onDeleteScenario,onImportScenarios}) {
+function LabsHub({session,classStudents,customScenarios,builtinInstructorNotes,onActivate,onSaveScenario,onDeleteScenario,onImportScenarios}) {
   const [tab,setTab]=useState("push"); // "push" | "readiness" | "library"
   const tabBtn=(id,label)=>(
     <button onClick={()=>setTab(id)}
@@ -2299,9 +2303,9 @@ function LabsHub({session,classStudents,customScenarios,onActivate,onSaveScenari
         {tabBtn("readiness","Readiness Checks")}
         {tabBtn("library","Scenario Library")}
       </div>
-      {tab==="push"&&<LabManager session={session} classStudents={classStudents} customScenarios={customScenarios} onActivate={onActivate} />}
+      {tab==="push"&&<LabManager session={session} classStudents={classStudents} customScenarios={customScenarios} builtinInstructorNotes={builtinInstructorNotes} onActivate={onActivate} />}
       {tab==="readiness"&&<ReadinessManager session={session} />}
-      {tab==="library"&&<ScenarioLibrary customScenarios={customScenarios} onSave={onSaveScenario} onDelete={onDeleteScenario} onImport={onImportScenarios} />}
+      {tab==="library"&&<ScenarioLibrary customScenarios={customScenarios} builtinInstructorNotes={builtinInstructorNotes} onSave={onSaveScenario} onDelete={onDeleteScenario} onImport={onImportScenarios} />}
     </div>
   );
 }
@@ -2393,7 +2397,7 @@ function ReadinessManager({session}){
 // Two-column: left = class + students + assignment options
 //             right = scenario browser (all courses) + preview
 // ═══════════════════════════════════════════════════════════════
-function LabManager({session,classStudents,customScenarios,onActivate}) {
+function LabManager({session,classStudents,customScenarios,builtinInstructorNotes,onActivate}) {
   const myClasses = session.classes||[];
   const [activeClassId,setActiveClassId]=useState(myClasses[0]?.id||null);
   const [assignMode,setAssignMode]=useState("broadcast");
@@ -2410,13 +2414,14 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
   const courseStudents=classStudents.filter(u=>u.enrolled_class_id===activeClassId);
 
   // ALL scenarios from all courses + custom
-  const allBuiltIn=SEED_SCENARIOS;
+  const allBuiltIn=SEED_SCENARIOS.map(s=>({...s,instructorNotes:builtinInstructorNotes?.[s.id]||""}));
   const allCustom=(customScenarios||[]).map(s=>({...s,courseId:s.course_id}));
   const everything=[...allBuiltIn,...allCustom];
 
   const tabScenarios=everything
     .filter(s=>(s.courseId||s.course_id)===scenarioCourseTab)
-    .filter(s=>scenarioSearch===""||s.title.toLowerCase().includes(scenarioSearch.toLowerCase()));
+    .filter(s=>scenarioSearch===""||s.title.toLowerCase().includes(scenarioSearch.toLowerCase()))
+    .sort((a,b)=>(a.week||0)-(b.week||0)||a.title.localeCompare(b.title));
 
   function toggleStudent(uid){setSelectedStudents(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);}
 
@@ -2648,7 +2653,7 @@ function fromTicketTemplateRow(row) {
 const COURSE_COLOR = {net:"#38bdf8",hw:"#fb923c",cyber:"#a78bfa"};
 const COURSE_LABEL = {net:"Networking",hw:"Hardware",cyber:"Cybersecurity"};
 
-function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
+function ScenarioLibrary({customScenarios,builtinInstructorNotes,onSave,onDelete,onImport}) {
   const [editing,setEditing]   = useState(null);
   const [filter,setFilter]     = useState("all");
   const [importing,setImporting] = useState(false);
@@ -2657,7 +2662,7 @@ function ScenarioLibrary({customScenarios,onSave,onDelete,onImport}) {
   const [saving,setSaving]     = useState(false);
   const [form,setForm]         = useState(BLANK_SCENARIO);
 
-  const builtIn = SCENARIOS.map(s=>({...s,course_id:s.courseId,_builtin:true}));
+  const builtIn = SCENARIOS.map(s=>({...s,course_id:s.courseId,_builtin:true,instructorNotes:builtinInstructorNotes?.[s.id]||""}));
   const all = [...builtIn,...customScenarios];
   const filtered = filter==="all" ? all : filter==="custom" ? customScenarios : all.filter(s=>s.course_id===filter||s.courseId===filter);
 
