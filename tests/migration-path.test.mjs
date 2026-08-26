@@ -17,6 +17,7 @@ const expectedMigrations = [
   "20260826180023_scripted_client_inquiries.sql",
   "20260826184555_linked_team_incidents.sql",
   "20260826202605_protect_builtin_scenario_secrets.sql",
+  "20260826204955_protect_custom_template_secrets.sql",
 ];
 
 const baseline = readFileSync(
@@ -125,7 +126,8 @@ test("the guide rejects linked production resets", () => {
 test("custom scenario metadata uses the schema's JSON column", () => {
   assert.match(app, /function toTicketTemplateRow\(/);
   assert.match(app, /scenario:\{\.\.\.\(storedScenario\|\|\{\}\),requesterId,instructorNotes,inquiryLimit:Number\(inquiryLimit\),clientResponses\}/);
-  assert.match(app, /data\.map\(fromTicketTemplateRow\)/);
+  assert.match(app, /\(data\|\|\[\]\)\.map\(fromTicketTemplateRow\)/);
+  assert.match(app, /save_custom_ticket_templates/);
   assert.doesNotMatch(app, /ticket_templates"\)\.insert\(\{\.\.\.scenario,id\}/);
 });
 

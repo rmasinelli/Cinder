@@ -309,8 +309,11 @@ export default function App() {
         }
         setClassStudents(all);
       });
-      supabase.from("ticket_templates").select("*").order("course_id").order("week")
-        .then(({data})=>{ if(data) setCustomScenarios(data.map(fromTicketTemplateRow)); });
+      supabase.rpc("get_custom_ticket_templates")
+        .then(({data,error})=>{
+          if(error) console.error("custom scenario load error:",error);
+          else setCustomScenarios((data||[]).map(fromTicketTemplateRow));
+        });
       supabase.rpc("get_builtin_scenario_instructor_notes")
         .then(({data,error})=>{
           if(error) console.error("built-in instructor notes load error:",error);
@@ -359,22 +362,16 @@ export default function App() {
   }
 
   async function saveCustomScenario(scenario) {
-    if (scenario.id) {
-      const {error} = await supabase.from("ticket_templates").update(toTicketTemplateRow(scenario)).eq("id",scenario.id);
-      if (error) { showToast("Save failed: "+error.message,"error"); return false; }
-      setCustomScenarios(prev=>prev.map(s=>s.id===scenario.id?scenario:s));
-    } else {
-      const id = "cst-"+Date.now();
-      const {data,error} = await supabase.from("ticket_templates").insert({...toTicketTemplateRow(scenario),id}).select().single();
-      if (error) { showToast("Save failed: "+error.message,"error"); return false; }
-      setCustomScenarios(prev=>[...prev,fromTicketTemplateRow(data)]);
-    }
+    const id=scenario.id||"cst-"+Date.now();
+    const {data,error}=await supabase.rpc("save_custom_ticket_templates",{p_templates:[{...toTicketTemplateRow(scenario),id}]});
+    if(error){showToast("Save failed: "+error.message,"error");return false;}
+    setCustomScenarios((data||[]).map(fromTicketTemplateRow));
     showToast("Scenario saved.");
     return true;
   }
 
   async function deleteCustomScenario(id) {
-    const {error} = await supabase.from("ticket_templates").delete().eq("id",id);
+    const {error} = await supabase.rpc("delete_custom_ticket_template",{p_template_id:id});
     if (error) { showToast("Delete failed: "+error.message,"error"); return; }
     setCustomScenarios(prev=>prev.filter(s=>s.id!==id));
     showToast("Scenario deleted.");
@@ -400,10 +397,10 @@ export default function App() {
 
   async function importScenarios(rows) {
     const timestamped = rows.map((r,i)=>({...toTicketTemplateRow(r), id:"cst-"+Date.now()+"-"+i}));
-    const {data,error} = await supabase.from("ticket_templates").insert(timestamped).select();
+    const {data,error} = await supabase.rpc("save_custom_ticket_templates",{p_templates:timestamped});
     if (error) { showToast("Import failed: "+error.message,"error"); return; }
-    setCustomScenarios(prev=>[...prev,...data.map(fromTicketTemplateRow)]);
-    showToast(`Imported ${data.length} scenario(s).`);
+    setCustomScenarios((data||[]).map(fromTicketTemplateRow));
+    showToast(`Imported ${rows.length} scenario(s).`);
   }
 
   async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId, requestedTeamSize=3) {
@@ -427,7 +424,6 @@ export default function App() {
           course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
           description:scenario.description,priority:scenario.priority,group_tag:teamKey,
           inquiry_limit:Number(scenario.inquiryLimit||0),
-          ...(scenario.clientResponses?{client_responses:scenario.clientResponses}:{}),
           team_key:teamKey,team_name:teamKey?`${color[0]} Team ${teamIndex+1}`:null,
           color_name:color?.[0]||null,color_hex:color?.[1]||null,
           team_role:teamKey?roles[((i-teamIndex*teamSize)+week-1)%roles.length]:null,
