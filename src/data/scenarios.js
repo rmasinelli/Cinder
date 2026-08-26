@@ -1,4 +1,5 @@
 import { IT111_SCENARIO_BANK } from "./networkScenarioBank.js";
+import { IT161_ADVANCED_BANK } from "./hardwareAdvancedBank.js";
 
 // ─────────────────────────────────────────────
 // scenarios.js
@@ -539,5 +540,6 @@ Ember Service Operations`,
 
 export const SCENARIOS = [
   ...IT111_SCENARIO_BANK,
-  ...LEGACY_SCENARIOS.filter(scenario=>scenario.courseId!=="net"),
+  ...IT161_ADVANCED_BANK,
+  ...LEGACY_SCENARIOS.filter(scenario=>scenario.courseId!=="net"&&!(scenario.courseId==="hw"&&scenario.week>=5&&scenario.week<=10)),
 ];
