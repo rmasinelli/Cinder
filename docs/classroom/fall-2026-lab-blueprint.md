@@ -270,12 +270,15 @@ The system must keep Hardware and Networking visibly separate while preserving o
 1. Complete the physical hardware audit in Issue #17.
 2. Build and validate the POST/RAM pilot in Issue #18.
 3. Rework the first four Hardware scenarios in Issue #19.
-4. Add readiness checks and preparation-station routing.
-5. Add controlled client inquiries and scripted responses.
-6. Add linked team incidents, team colors, roles, and individual-contribution gates.
-7. Create the nine-week IT 161 and IT 111 scenario/readiness banks plus equivalent final variants.
-8. Run the multi-student pilot in Issue #20.
-9. Complete launch documentation and fallback planning in Issue #21.
+4. Add readiness checks and preparation-station routing in Issue #40.
+5. Add controlled client inquiries and scripted responses in Issue #38.
+6. Add linked team incidents, team colors, roles, and individual-contribution gates in Issue #41.
+7. Add post-lab reflection tracking in Issue #39 after the critical hands-on path is stable.
+8. Complete IT 161 Labs 5-9 and final variants in Issue #43.
+9. Author the IT 111 nine-lab and final scenario bank in Issue #42.
+10. Build the combined final deployment incident and rotation runbook in Issue #44.
+11. Run the multi-student pilot in Issue #20.
+12. Complete launch documentation and fallback planning in Issue #21.
 
 ## Deferred decisions
 
