@@ -137,9 +137,6 @@ as $$
     select distinct check_row.*
     from public.readiness_checks check_row
     join public.lab_assignments assignment on assignment.id = check_row.assignment_id
-    join public.profile_classes membership
-      on membership.class_id = assignment.class_id
-     and membership.profile_id = (select auth.uid())
     join public.assigned_tickets ticket
       on ticket.assignment_id = assignment.id
      and ticket.student_id = (select auth.uid())
@@ -207,9 +204,6 @@ begin
   select check_row.* into v_check
   from public.readiness_checks check_row
   join public.lab_assignments assignment on assignment.id = check_row.assignment_id
-  join public.profile_classes membership
-    on membership.class_id = assignment.class_id
-   and membership.profile_id = v_user_id
   join public.assigned_tickets ticket
     on ticket.assignment_id = assignment.id
    and ticket.student_id = v_user_id
@@ -218,6 +212,12 @@ begin
   if not found then
     raise exception 'readiness_check_not_found' using errcode = 'P0002';
   end if;
+
+  -- Two tabs or a double-click would otherwise read the same attempt_number
+  -- and collide on the (check_id, student_id, attempt_number) unique index.
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_check_id::text || v_user_id::text, 0)
+  );
 
   if exists (
     select 1 from public.readiness_attempts

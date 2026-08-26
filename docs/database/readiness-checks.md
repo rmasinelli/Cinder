@@ -22,7 +22,7 @@ A published check may be corrected in place. Previously successful attempts rema
 
 ## Security boundary
 
-The browser never receives direct table access to readiness answer keys and never inserts attempts. `get_my_readiness_checks` returns only question IDs, prompts, and options. `submit_my_readiness_check` derives the student from `auth.uid()`, checks enrollment plus ticket ownership, scores on the server, records the attempt, and returns feedback only after submission.
+The browser never receives direct table access to readiness answer keys and never inserts attempts. `get_my_readiness_checks` returns only question IDs, prompts, and options. `submit_my_readiness_check` derives the student from `auth.uid()`, checks ticket ownership, scores on the server, records the attempt, and returns feedback only after submission.
 
 All readiness tables use RLS and explicit grants. Privileged functions pin an empty `search_path`, revoke default execution, and grant only the required authenticated entry points.
 

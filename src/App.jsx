@@ -305,7 +305,9 @@ export default function App() {
 
     refreshAssignedTickets(session);
     refreshReadinessChecks(session);
-    const refresh = () => refreshAssignedTickets(session);
+    // Readiness must refetch with the tickets: a check published mid-session
+    // hides the ticket, and only this refresh reveals the preparation station.
+    const refresh = () => { refreshAssignedTickets(session); refreshReadinessChecks(session); };
     const channel = supabase.channel(`classroom-assignments:${session.id}`)
       .on("postgres_changes",{event:"*",schema:"public",table:"assigned_tickets"},refresh)
       .on("postgres_changes",{event:"*",schema:"public",table:"lab_notes"},refresh)
@@ -1252,16 +1254,21 @@ function StudentWorkflow({status}) {
 
 function ReadinessStation({checks,onSubmit}) {
   const pending=checks.filter(check=>!check.passed);
-  const [activeId,setActiveId]=useState(pending[0]?.check_id||null);
+  const [activeId,setActiveId]=useState(null);
   const [answers,setAnswers]=useState({});
   const [result,setResult]=useState(null);
   const [submitting,setSubmitting]=useState(false);
-  const active=checks.find(check=>check.check_id===activeId);
-  if(pending.length===0) return null;
+  // activeId is only a preference. Fall back to the first pending check so a
+  // late RPC response never renders an empty card, and hold a just-passed
+  // check on screen while its result is still displayed.
+  const active=pending.find(check=>check.check_id===activeId)
+    ||(result&&checks.find(check=>check.check_id===activeId))
+    ||pending[0];
+  if(pending.length===0&&!result) return null;
 
   async function submit(){
     if(!active||submitting) return;
-    setSubmitting(true); setResult(null);
+    setActiveId(active.check_id); setSubmitting(true); setResult(null);
     try { setResult(await onSubmit(active.check_id,answers)); }
     catch(error){ setResult({error:error?.message||"Readiness check could not be submitted."}); }
     finally { setSubmitting(false); }
@@ -1271,7 +1278,7 @@ function ReadinessStation({checks,onSubmit}) {
     <SectionLabel>Preparation station</SectionLabel>
     <h2 style={{margin:"0 0 6px",fontSize:19,color:"#F0EDE8"}}>Complete readiness before hands-on work</h2>
     <p style={{margin:"0 0 18px",fontSize:12,color:"#8A7868",lineHeight:1.6}}>Score 80% or higher to release your own ticket. A retry never holds up prepared teammates.</p>
-    {pending.length>1&&<div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>{pending.map(check=><button key={check.check_id} onClick={()=>{setActiveId(check.check_id);setAnswers({});setResult(null);}} style={{...btnGhost,borderColor:activeId===check.check_id?"#E8922E":"#2A2A2A",color:activeId===check.check_id?"#E8922E":"#8A7868"}}>{check.title}</button>)}</div>}
+    {(pending.length>1||(result&&pending.length>0))&&<div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>{pending.map(check=><button key={check.check_id} onClick={()=>{setActiveId(check.check_id);setAnswers({});setResult(null);}} style={{...btnGhost,borderColor:activeId===check.check_id?"#E8922E":"#2A2A2A",color:activeId===check.check_id?"#E8922E":"#8A7868"}}>{check.title}</button>)}</div>}
     {active&&<>
       <div style={{fontSize:14,fontWeight:700,color:"#EDE9E3",marginBottom:4}}>{active.title}</div>
       {active.instructions&&<div style={{fontSize:12,color:"#8A7868",marginBottom:16}}>{active.instructions}</div>}
@@ -2244,6 +2251,10 @@ function ReadinessManager({session}){
 
   async function save(status){
     if(!complete||saving) return;
+    // Dropping a published check back to draft removes the gate, releasing
+    // every student's ticket without a passing score.
+    if(status==="draft"&&form.status==="published"
+       &&!window.confirm("Saving this as a draft unpublishes the check and immediately releases every student's ticket, even for students who have not passed. Continue?")) return;
     const assignment=assignments.find(item=>item.id===selectedAssignment);
     setSaving(true); setMessage("");
     const payload={assignment_id:selectedAssignment,class_id:assignment.class_id,title:form.title.trim(),instructions:form.instructions.trim(),status,passing_percent:80,questions:form.questions,created_by:session.id,published_at:status==="published"?new Date().toISOString():null,updated_at:new Date().toISOString()};
@@ -2275,7 +2286,7 @@ function ReadinessManager({session}){
         </div>)}
       </>}
       {message&&<div role="status" style={{fontSize:12,color:message.includes("saved")||message.includes("Published")?"#4ade80":"#f87171",marginBottom:12}}>{message}</div>}
-      <div style={{display:"flex",gap:8}}><button onClick={()=>save("draft")} disabled={!complete||saving} style={{...btnGhost,opacity:complete?1:0.4}}>Save draft</button><button onClick={()=>save("published")} disabled={!complete||saving} style={{...btnPrimary,width:"auto",opacity:complete?1:0.4}}>{form.status==="published"?"Publish correction":"Publish check"}</button></div>
+      <div style={{display:"flex",gap:8}}><button onClick={()=>save("draft")} disabled={!complete||saving} style={{...btnGhost,opacity:complete?1:0.4}}>{form.status==="published"?"Unpublish to draft":"Save draft"}</button><button onClick={()=>save("published")} disabled={!complete||saving} style={{...btnPrimary,width:"auto",opacity:complete?1:0.4}}>{form.status==="published"?"Publish correction":"Publish check"}</button></div>
     </Card>}
     {form.id&&<Card style={{marginTop:16}}><SectionLabel>Student readiness</SectionLabel>{roster.length===0?<div style={{fontSize:12,color:"#6A5848"}}>No assigned students.</div>:<div style={{display:"grid",gap:7}}>{roster.map(student=><div key={student.student_id} style={{display:"grid",gridTemplateColumns:"1fr 110px 80px",gap:12,padding:"8px 0",borderBottom:"1px solid #242424",fontSize:12}}><span style={{color:"#D8C8B8"}}>{student.alias}</span><span style={{color:student.readiness_state==="ready"?"#4ade80":student.readiness_state==="preparing"?"#fbbf24":"#6A5848",textTransform:"capitalize"}}>{student.readiness_state}</span><span style={{color:"#8A7868",textAlign:"right"}}>{student.last_score==null?"—":`${student.last_score}%`}</span></div>)}</div>}</Card>}
   </div>;
