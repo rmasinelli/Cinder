@@ -2611,6 +2611,8 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
                 <div style={{padding:"14px 16px"}}>
                   <div style={{fontSize:13,fontWeight:600,color:"#EDE9E3",marginBottom:10}}>{selectedScenario.title}</div>
                   <div style={{fontSize:12,color:"#8A7868",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:selectedScenario.instructorNotes?16:0}}>{selectedScenario.description}</div>
+                  {selectedScenario.readiness?.length>0&&<div style={{marginBottom:16}}><div style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.12em",color:"#38BDF8",marginBottom:7,fontWeight:700}}>Five readiness prompts</div><ol style={{margin:"0 0 0 18px",padding:0,color:"#8A98A8",fontSize:11,lineHeight:1.7}}>{selectedScenario.readiness.map(prompt=><li key={prompt}>{prompt}</li>)}</ol></div>}
+                  {selectedScenario.knowledgeRefs?.length>0&&<div style={{fontSize:10,color:"#6A7868",marginBottom:14}}>Field Journal references: {selectedScenario.knowledgeRefs.join(" · ")}</div>}
                   {selectedScenario.instructorNotes&&(
                     <div style={{borderTop:"1px solid #1E1E1E",paddingTop:12}}>
                       <div style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.12em",color:"#E8922E",marginBottom:6,fontWeight:700}}>🔬 Physical Lab Task — Instructor Only</div>
