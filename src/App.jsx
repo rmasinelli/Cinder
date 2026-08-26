@@ -178,7 +178,7 @@ export default function App() {
   const refreshAssignedTickets = useCallback(async currentSession => {
     if (!currentSession) return;
     let query = supabase.from("assigned_tickets")
-      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(*), ticket_status_history(changed_at), ticket_verification_reviews(action, feedback, manual_checked, created_at, reviewer_alias), ticket_client_inquiries(*)")
+      .select("*, lab_assignments(week_label, assigned_at, class_id), field_journal_links(*), ticket_status_history(changed_at), ticket_verification_reviews(action, feedback, manual_checked, created_at, reviewer_alias), ticket_client_inquiries(*), team_incidents(*), team_contributions(*)")
       .order("created_at",{ascending:false});
     if (currentSession.role !== "admin") query = query.eq("student_id",currentSession.id);
     const {data,error} = await query;
@@ -400,26 +400,32 @@ export default function App() {
     showToast(`Imported ${data.length} scenario(s).`);
   }
 
-  async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId) {
+  async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId, requestedTeamSize=3) {
     const scenario = SCENARIOS.find(s=>s.id===scenarioId)||customScenarios.find(s=>s.id===scenarioId);
     if (!scenario) return;
 
-    // Build rows — pairs share a group_tag
-    const rows = mode==="pairs"
-      ? studentIds.reduce((acc,sid,i)=>{
-          const tag=`W${week}-pair${Math.floor(i/2)+1}`;
-          acc.push({student_id:sid,scenario_id:scenarioId,
-            course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-            description:scenario.description,priority:scenario.priority,group_tag:tag,
-            inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{}});
-          return acc;
-        },[])
-      : studentIds.map(sid=>({
+    const teamSize=mode==="pairs"?2:mode==="teams"?Math.max(3,Math.min(5,requestedTeamSize)):0;
+    const palette=[
+      ["Ember","#E8922E"],["Sky","#38BDF8"],["Violet","#A78BFA"],["Green","#4ADE80"],
+      ["Rose","#FB7185"],["Gold","#FBBF24"],["Slate","#94A3B8"],["Teal","#2DD4BF"],
+    ];
+    const roleSets={2:["Client communication / lead","Hands-on technician"],3:["Client communication / lead","Hands-on technician","Evidence / documentation"]};
+    const rows=studentIds.map((sid,i)=>{
+      const teamIndex=teamSize?Math.floor(i/teamSize):null;
+      const actualSize=teamSize?Math.min(teamSize,studentIds.length-teamIndex*teamSize):0;
+      const roles=actualSize>3?["Client communication / lead","Hands-on technician","Evidence / documentation","Safety / equipment manager","Verification technician"].slice(0,actualSize):(roleSets[actualSize]||roleSets[3]);
+      const color=teamIndex===null?null:palette[teamIndex%palette.length];
+      const teamKey=teamIndex===null?null:`W${week}-${mode}${teamIndex+1}`;
+      return {
           student_id:sid,scenario_id:scenarioId,
           course_id:courseId,week,title:`[W${week}] ${scenario.title}`,
-          description:scenario.description,priority:scenario.priority,group_tag:null,
+          description:scenario.description,priority:scenario.priority,group_tag:teamKey,
           inquiry_limit:Number(scenario.inquiryLimit||0),client_responses:scenario.clientResponses||{},
-        }));
+          team_key:teamKey,team_name:teamKey?`${color[0]} Team ${teamIndex+1}`:null,
+          color_name:color?.[0]||null,color_hex:color?.[1]||null,
+          team_role:teamKey?roles[((i-teamIndex*teamSize)+week-1)%roles.length]:null,
+        };
+    });
 
     const {error:rowsErr} = await supabase.rpc("create_lab_assignment_with_tickets",{
       p_class_id:classId||session.class_id,
@@ -459,6 +465,18 @@ export default function App() {
     if(error) throw error;
     await refreshAssignedTickets(session);
     return {savedAt:new Date().toISOString()};
+  }
+
+  async function saveTeamContribution(ticketId,role,contribution){
+    const {error}=await supabase.rpc("save_my_team_contribution",{p_assigned_ticket_id:ticketId,p_team_role:role,p_contribution:contribution});
+    if(error) throw error;
+    await refreshAssignedTickets(session);
+  }
+
+  async function saveTeamSharedOutcome(ticketId,sharedOutcome,expectedUpdatedAt){
+    const {error}=await supabase.rpc("save_my_team_shared_outcome",{p_assigned_ticket_id:ticketId,p_shared_outcome:sharedOutcome,p_expected_updated_at:expectedUpdatedAt||null});
+    if(error) throw error;
+    await refreshAssignedTickets(session);
   }
 
   async function updateAssignedTicketStatus(ticketId, status) {
@@ -524,6 +542,8 @@ export default function App() {
           onConsumeInitial={()=>setDeepAssigned(null)}
           onSaveNote={saveLabNote}
           onSaveFieldJournal={saveFieldJournalLink}
+          onSaveTeamContribution={saveTeamContribution}
+          onSaveTeamSharedOutcome={saveTeamSharedOutcome}
           onStatusChange={updateAssignedTicketStatus}
           onOpen={()=>{}} />
       )}
@@ -1356,7 +1376,23 @@ function ClientInquiryPanel({ticket,onSubmit}) {
   </div>;
 }
 
-function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],safetyAcknowledgments=[],initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onStatusChange,onSubmitReadiness,onSubmitClientInquiry,onAcknowledgeSafety}) {
+function TeamContribution({ticket,onSave,onSaveSharedOutcome}){
+  const incident=Array.isArray(ticket.team_incidents)?ticket.team_incidents[0]:ticket.team_incidents;
+  const saved=Array.isArray(ticket.team_contributions)?ticket.team_contributions[0]:ticket.team_contributions;
+  const assignedRole=saved?.team_role||"";
+  const [contribution,setContribution]=useState(saved?.contribution||"");
+  const [saving,setSaving]=useState(false);const [message,setMessage]=useState("");
+  const [sharedOutcome,setSharedOutcome]=useState(incident?.shared_outcome||"");
+  const [savingOutcome,setSavingOutcome]=useState(false);
+  const [roster,setRoster]=useState([]);
+  useEffect(()=>{let active=true;if(ticket.team_incident_id)supabase.rpc("team_roster",{p_assigned_ticket_id:ticket.id}).then(({data})=>{if(active)setRoster(data||[]);});return()=>{active=false;};},[ticket.id,ticket.team_incident_id]);
+  if(!ticket.team_incident_id) return null;
+  async function submit(){setSaving(true);setMessage("");try{await onSave(ticket.id,assignedRole,contribution);setMessage("Individual contribution recorded.");}catch(error){setMessage(error?.message||"Contribution was not saved.");}finally{setSaving(false);}}
+  async function submitOutcome(){setSavingOutcome(true);setMessage("");try{await onSaveSharedOutcome(ticket.id,sharedOutcome,incident?.shared_outcome_updated_at);setMessage("Shared team outcome recorded.");}catch(error){setMessage(error?.message==="shared_outcome_changed"?"A teammate updated this outcome. Reopen the ticket to load their version.":error?.message||"Shared outcome was not saved.");}finally{setSavingOutcome(false);}}
+  return <Card style={{marginTop:16,border:`1px solid ${incident?.color_hex||"#A78BFA"}55`}}><div style={{display:"flex",justifyContent:"space-between",gap:12}}><SectionLabel>Linked team incident</SectionLabel><span style={{fontSize:11,color:incident?.color_hex||"#A78BFA"}}>{incident?.team_name||ticket.group_tag} · {incident?.color_name}</span></div>{incident?.title&&<div style={{fontSize:13,color:"#EDE9E3",fontWeight:700,marginBottom:6}}>{incident.title}</div>}{incident?.description&&<p style={{fontSize:11,color:"#8A7868",lineHeight:1.55,marginTop:0}}>{incident.description}</p>}<DetailRow label="Your role this lab" val={assignedRole||"Not assigned"}/>{roster.length>0&&<div style={{background:"#111",border:"1px solid #242424",borderRadius:6,padding:9,marginBottom:14}}>{roster.map(member=><div key={member.student_id} style={{fontSize:10,color:member.contribution_recorded?"#4ADE80":"#FBBF24",marginBottom:3}}>{member.contribution_recorded?"✓":"○"} {member.student_alias} · {member.team_role} · {member.ticket_status}</div>)}</div>}<Field label="Shared verified outcome"><textarea value={sharedOutcome} maxLength={2000} onChange={event=>{setSharedOutcome(event.target.value);setMessage("");}} placeholder="What result did the team verify together?" style={{...inputStyle,minHeight:64,resize:"vertical"}}/>{incident?.shared_outcome_updated_at&&<div style={{fontSize:9,color:"#6A5848",marginTop:5}}>Last updated {fmt(incident.shared_outcome_updated_at)}</div>}<button onClick={submitOutcome} disabled={savingOutcome||sharedOutcome.trim().length<10} style={{...btnGhost,marginTop:8,opacity:savingOutcome||sharedOutcome.trim().length<10?0.45:1}}>{savingOutcome?"Saving…":"Save shared outcome"}</button></Field><p style={{fontSize:11,color:"#8A7868",lineHeight:1.55}}>Record only what you personally contributed below. The team’s technical outcome is shared; your evidence remains individual.</p><textarea value={contribution} maxLength={1000} onChange={event=>{setContribution(event.target.value);setMessage("");}} placeholder="What did you personally do, observe, communicate, or verify?" style={{...inputStyle,minHeight:78,resize:"vertical"}}/><button onClick={submit} disabled={saving||contribution.trim().length<10||!assignedRole} style={{...btnPrimary,width:"auto",marginTop:10,opacity:saving||contribution.trim().length<10?0.45:1}}>{saving?"Saving…":"Save individual contribution"}</button>{message&&<div role="status" style={{fontSize:11,color:message.includes("recorded")?"#4ADE80":"#F87171",marginTop:8}}>{message}</div>}</Card>;
+}
+
+function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],safetyAcknowledgments=[],initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onSaveTeamContribution,onSaveTeamSharedOutcome,onStatusChange,onSubmitReadiness,onSubmitClientInquiry,onAcknowledgeSafety}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
   const [noteText,setNoteText]=useState("");
@@ -1580,8 +1616,9 @@ function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],saf
                 </div>
               </div>
 
-              <FieldJournalLink key={at.id} ticket={at} session={session} onSave={onSaveFieldJournal} />
-              <ClientInquiryPanel ticket={at} onSubmit={onSubmitClientInquiry} />
+              <FieldJournalLink key={`journal-${at.id}`} ticket={at} session={session} onSave={onSaveFieldJournal} />
+              <TeamContribution key={`team-${at.id}`} ticket={at} onSave={onSaveTeamContribution} onSaveSharedOutcome={onSaveTeamSharedOutcome}/>
+              <ClientInquiryPanel key={`client-${at.id}`} ticket={at} onSubmit={onSubmitClientInquiry} />
 
               {/* Activity thread */}
               <div style={{marginTop:16,background:"#141414",border:"1px solid #1E1E1E",borderRadius:10,overflow:"hidden"}}>
@@ -1839,11 +1876,14 @@ function AssignmentQueue({tickets,students,onReview}) {
             const journalLink=journalFor(ticket);
             const review=latestReview(ticket);
             const isOpen=expanded===ticket.id;
+            const incident=Array.isArray(ticket.team_incidents)?ticket.team_incidents[0]:ticket.team_incidents;
+            const teamTickets=ticket.team_incident_id?tickets.filter(item=>item.team_incident_id===ticket.team_incident_id):[];
             return <div key={ticket.id} style={{background:"#141414",border:`1px solid ${isOpen?"#E8922E55":"#1E1E1E"}`,borderRadius:10,overflow:"hidden"}}>
               <button onClick={()=>{setExpanded(isOpen?null:ticket.id);setManualChecked(false);setFeedback("");}}
                 style={{width:"100%",background:"none",border:"none",padding:"16px 18px",display:"grid",gridTemplateColumns:"120px minmax(180px,1.5fr) minmax(130px,1fr) 130px",gap:16,textAlign:"left",alignItems:"center"}}>
                 <div>
                   <div style={{fontSize:11,color:"#E8922E",fontFamily:"'JetBrains Mono',monospace",fontWeight:700}}>{ticket.ticket_number}</div>
+                  {incident&&<div style={{fontSize:9,color:incident.color_hex,marginTop:4}}>● {incident.team_name}</div>}
                   {journalLink&&<div style={{fontSize:9,color:"#8A7868",marginTop:4}}>{journalLink.manual_type} · TKT-{String(journalLink.service_log_number).padStart(4,"0")}</div>}
                 </div>
                 <div>
@@ -1867,6 +1907,7 @@ function AssignmentQueue({tickets,students,onReview}) {
                   <DetailRow label="Last activity" val={fmt(new Date(lastActivity(ticket)).toISOString())}/>
                 </div>
                 {journalLink?.client_resolution&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>Client-facing resolution</div><div style={{fontSize:12,color:"#B8A898",lineHeight:1.5}}>{journalLink.client_resolution}</div></div>}
+                {incident&&<div style={{background:"#141414",border:`1px solid ${incident.color_hex}44`,borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:incident.color_hex,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{incident.team_name} · {incident.color_name} · Team readiness</div>{teamTickets.map(member=>{const contribution=Array.isArray(member.team_contributions)?member.team_contributions[0]:member.team_contributions;const complete=Boolean(contribution?.contribution);return <div key={member.id} style={{fontSize:11,color:complete?"#4ADE80":"#FBBF24",marginBottom:5}}>{complete?"✓":"○"} {studentName(member.student_id)} · {contribution?.team_role||"Role missing"} · {member.status}</div>;})}</div>}
                 {(ticket.ticket_client_inquiries||[]).length>0&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Client inquiry history</div>{[...ticket.ticket_client_inquiries].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).map(item=><div key={item.id} style={{fontSize:11,lineHeight:1.5,marginBottom:9,borderLeft:"2px solid #E8922E",paddingLeft:9}}><div style={{color:"#D8C8B8"}}>Student: {item.question}</div><div style={{color:"#8A7868"}}>Client: {item.response}</div><div style={{color:"#4A4038",fontSize:9}}>{CLIENT_INQUIRY_PURPOSES.find(([key])=>key===item.purpose)?.[1]} · {fmt(item.created_at)}</div></div>)}</div>}
                 {review?.feedback&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:14}}>Last {review.action.toLowerCase()} feedback: {review.feedback}</div>}
                 {(ticket.status==="Verification"||ticket.status==="Closed")&&<>
@@ -2362,6 +2403,7 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
   const [scenarioSearch,setScenarioSearch]=useState("");
   const [selectedScenario,setSelectedScenario]=useState(null);
   const [weekOverride,setWeekOverride]=useState("");
+  const [teamSize,setTeamSize]=useState(3);
 
   const activeClass=myClasses.find(c=>c.id===activeClassId)||myClasses[0];
   const classCourse=courseById(activeClass?.course_id)||courseById("net");
@@ -2384,7 +2426,7 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
     if(assignees.length===0) return;
     const week=weekOverride?parseInt(weekOverride):(selectedScenario.week||1);
     setPushing(true);
-    await onActivate(selectedScenario.courseId||selectedScenario.course_id,week,selectedScenario.id,assignMode,assignees,activeClassId);
+    await onActivate(selectedScenario.courseId||selectedScenario.course_id,week,selectedScenario.id,assignMode,assignees,activeClassId,teamSize);
     setPushing(false);
     setSelectedStudents([]);
   }
@@ -2445,6 +2487,7 @@ function LabManager({session,classStudents,customScenarios,onActivate}) {
                   type="number" min={1} max={10} placeholder={`Default: ${selectedScenario?.week||"—"}`}
                   style={inputStyle} />
               </Field>
+              {assignMode==="teams"&&<Field label="Students per team"><select value={teamSize} onChange={e=>setTeamSize(Number(e.target.value))} style={inputStyle}><option value={3}>3 — core roles</option><option value={4}>4 — add safety/equipment</option><option value={5}>5 — add safety and verification</option></select></Field>}
             </div>
           </div>
 
