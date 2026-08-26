@@ -18,6 +18,7 @@ const expectedMigrations = [
   "20260826184555_linked_team_incidents.sql",
   "20260826202605_protect_builtin_scenario_secrets.sql",
   "20260826204955_protect_custom_template_secrets.sql",
+  "20260826221632_team_absence_and_private_scenario_loader.sql",
 ];
 
 const baseline = readFileSync(

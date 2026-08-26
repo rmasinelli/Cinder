@@ -504,6 +504,13 @@ export default function App() {
     showToast(action==="Approved"?"Ticket approved and closed.":action==="Returned"?"Ticket returned with feedback.":"Ticket reopened with feedback.");
   }
 
+  async function setTeamMemberExcused(ticketId,excused,reason=null){
+    const {error}=await supabase.rpc("set_team_member_excused",{p_assigned_ticket_id:ticketId,p_excused:excused,p_reason:reason});
+    if(error){showToast(`Attendance update failed: ${error.message}`,"error");throw error;}
+    await refreshAssignedTickets(session);
+    showToast(excused?"Team member marked absent; remaining work can be signed off.":"Team member restored to the sign-off gate.");
+  }
+
   if(!ready) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0D0D0D",gap:14}}>
       <GlobalStyles />
@@ -551,7 +558,7 @@ export default function App() {
           onOpen={()=>{}} />
       )}
       {view==="queue" && session.role==="admin" && (
-        <AssignmentQueue tickets={assignedTickets} students={classStudents} onReview={reviewAssignedTicket} />
+        <AssignmentQueue tickets={assignedTickets} students={classStudents} onReview={reviewAssignedTicket} onExcuse={setTeamMemberExcused} />
       )}
       {view==="labs" && session.role==="admin" && (
         <LabsHub
@@ -1821,7 +1828,7 @@ function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],saf
 // ═══════════════════════════════════════════════════════════════
 // QUEUE
 // ═══════════════════════════════════════════════════════════════
-function AssignmentQueue({tickets,students,onReview}) {
+function AssignmentQueue({tickets,students,onReview,onExcuse}) {
   const [filter,setFilter]=useState("Awaiting review");
   const [expanded,setExpanded]=useState(null);
   const [manualChecked,setManualChecked]=useState(false);
@@ -1859,6 +1866,19 @@ function AssignmentQueue({tickets,students,onReview}) {
       await onReview(ticket.id,action,manualChecked,feedback);
       setExpanded(null); setManualChecked(false); setFeedback("");
     } finally { setSaving(false); }
+  }
+
+  async function toggleExcused(member,contribution){
+    if(saving) return;
+    const isExcused=Boolean(contribution?.excused_at);
+    let reason=null;
+    if(!isExcused){
+      reason=window.prompt("Record why this student is absent or excused. This removes only their child ticket from the team sign-off gate.","");
+      if(reason===null) return;
+      if(reason.trim().length<10){window.alert("Enter at least 10 characters so the attendance exception is auditable.");return;}
+    }else if(!window.confirm("Restore this student to the team contribution and Verification gate?")) return;
+    setSaving(true);
+    try{await onExcuse(member.id,!isExcused,reason?.trim()||null);}finally{setSaving(false);}
   }
 
   return (
@@ -1911,7 +1931,7 @@ function AssignmentQueue({tickets,students,onReview}) {
                   <DetailRow label="Last activity" val={fmt(new Date(lastActivity(ticket)).toISOString())}/>
                 </div>
                 {journalLink?.client_resolution&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>Client-facing resolution</div><div style={{fontSize:12,color:"#B8A898",lineHeight:1.5}}>{journalLink.client_resolution}</div></div>}
-                {incident&&<div style={{background:"#141414",border:`1px solid ${incident.color_hex}44`,borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:incident.color_hex,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{incident.team_name} · {incident.color_name} · Team readiness</div>{teamTickets.map(member=>{const contribution=Array.isArray(member.team_contributions)?member.team_contributions[0]:member.team_contributions;const complete=Boolean(contribution?.contribution);return <div key={member.id} style={{fontSize:11,color:complete?"#4ADE80":"#FBBF24",marginBottom:5}}>{complete?"✓":"○"} {studentName(member.student_id)} · {contribution?.team_role||"Role missing"} · {member.status}</div>;})}</div>}
+                {incident&&<div style={{background:"#141414",border:`1px solid ${incident.color_hex}44`,borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:incident.color_hex,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{incident.team_name} · {incident.color_name} · Team readiness</div>{teamTickets.map(member=>{const contribution=Array.isArray(member.team_contributions)?member.team_contributions[0]:member.team_contributions;const excused=Boolean(contribution?.excused_at);const complete=Boolean(contribution?.contribution)||excused;return <div key={member.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:complete?"#4ADE80":"#FBBF24",marginBottom:5}}><span style={{flex:1}}>{complete?"✓":"○"} {studentName(member.student_id)} · {contribution?.team_role||"Role missing"} · {excused?`Excused: ${contribution.excused_reason}`:member.status}</span>{!contribution?.contribution&&<button disabled={saving} onClick={()=>toggleExcused(member,contribution)} style={{...btnGhost,padding:"3px 7px",fontSize:9}}>{excused?"Restore":"Mark absent"}</button>}</div>;})}</div>}
                 {(ticket.ticket_client_inquiries||[]).length>0&&<div style={{background:"#141414",border:"1px solid #242424",borderRadius:7,padding:12,marginBottom:14}}><div style={{fontSize:10,color:"#6A5848",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Client inquiry history</div>{[...ticket.ticket_client_inquiries].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).map(item=><div key={item.id} style={{fontSize:11,lineHeight:1.5,marginBottom:9,borderLeft:"2px solid #E8922E",paddingLeft:9}}><div style={{color:"#D8C8B8"}}>Student: {item.question}</div><div style={{color:"#8A7868"}}>Client: {item.response}</div><div style={{color:"#4A4038",fontSize:9}}>{CLIENT_INQUIRY_PURPOSES.find(([key])=>key===item.purpose)?.[1]} · {fmt(item.created_at)}</div></div>)}</div>}
                 {review?.feedback&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:14}}>Last {review.action.toLowerCase()} feedback: {review.feedback}</div>}
                 {(ticket.status==="Verification"||ticket.status==="Closed")&&<>

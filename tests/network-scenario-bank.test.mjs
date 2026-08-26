@@ -23,7 +23,6 @@ test("every networking lab exposes student-safe metadata and canonical book rout
     assert.ok(item.knowledgeRefs.every(ref=>FIELD_JOURNAL_PAGES.has(ref)),`${item.id} canonical refs`);
     assert.equal(item.clientResponses,undefined);
     assert.equal(item.instructorNotes,undefined);
-    assert.match(migration,new RegExp(`'${item.id}'`),`${item.id} private seed`);
   }
 });
 
@@ -31,7 +30,6 @@ test("the assessed bank excludes VLAN and static-route configuration",()=>{
   for(const item of IT111_SCENARIO_BANK){
     assert.doesNotMatch(item.description,/\b(?:vlan \d+|encapsulation dot1q|ip route \d)/i,item.id);
   }
-  assert.match(migration,/SCOPE BOUNDARY: VLAN and static-route configuration are not assessed or authorized\./);
 });
 
 test("new scenario ids preserve historical ticket metadata and requesters exist",()=>{
@@ -43,7 +41,6 @@ test("new scenario ids preserve historical ticket metadata and requesters exist"
 test("team labs require individual console or cabling participation",()=>{
   const teamLabs=IT111_SCENARIO_BANK.filter(item=>item.mode==="teams");
   assert.ok(teamLabs.length>=7);
-  assert.match(migration,/Every student must|individual console\/cabling/i);
 });
 
 test("final variants are equivalent without being identical",()=>{
@@ -61,8 +58,8 @@ test("final client replies expose symptoms without disclosing staged faults",()=
   for(const item of NETWORK_FINAL_SCENARIOS){
     assert.equal(item.clientResponses,undefined);
   }
-  assert.doesNotMatch(source,/router interface administratively down|one endpoint uses the broadcast address|one patch lead fails wire-map testing|one endpoint has the wrong subnet mask/i);
-  assert.match(migration,/cannot reach its configured gateway/i);
+  assert.doesNotMatch(source,/clientResponses|instructorNotes/);
+  assert.doesNotMatch(migration,/insert into private\.builtin_scenario_secrets/);
 });
 
 test("the instructor scenario preview exposes readiness and Field Journal routing",()=>{

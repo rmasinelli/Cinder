@@ -39,7 +39,7 @@ No student receives hands-on credit without recording an individual console or c
 
 ## Final equivalence
 
-Variants A-D change the IPv4 block and one safe staged fault while preserving the same work:
+Variants A-D change the IPv4 block and one safe instructor-held fault card while preserving the same work. The fault mapping is deliberately absent from this public repository:
 
 - `/27` or `/28` subnet calculation;
 - pod and laptop cabling;
@@ -61,4 +61,3 @@ The variants deliberately exclude VLANs and static routes. Known-good laptops re
 - One printed Service Log number is linked; Cinder does not duplicate the five detailed evidence rows.
 - Connectivity and reset are observed before sign-off.
 - Baseline is restored in under ten minutes before the next rotation.
-

@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(90);
+select plan(96);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -401,9 +401,13 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
 select is(
   (select count(*)::integer from public.get_builtin_scenario_instructor_notes()),
-  37,
-  'instructors receive notes for every built-in scenario without client scripts'
+  0,
+  'a clean database contains no committed assessment keys'
 );
+select lives_ok($$
+  select public.load_builtin_scenario_secrets('[{"scenario_id":"sc-hw-f26-05","instructor_notes":"PRIVATE TEST FIXTURE","client_responses":{"scope":{"response":"fixture scope","quality":"exact"},"timing_change":{"response":"fixture timing","quality":"ambiguous"},"symptom_error":{"response":"fixture symptom","quality":"exact"},"environment_equipment":{"response":"fixture equipment","quality":"exact"},"prior_troubleshooting":{"response":"fixture prior","quality":"mistaken"},"impact_urgency":{"response":"fixture impact","quality":"exact"}}}]'::jsonb,true)
+$$,'an instructor can atomically load a git-ignored secret pack');
+select is((select count(*)::integer from public.get_builtin_scenario_instructor_notes()),1,'the private loader returns the expected secret count');
 select lives_ok($$
   select public.create_lab_assignment_with_tickets(
     '10000000-0000-0000-0000-000000000001', 'Private built-in script probe',
@@ -426,7 +430,7 @@ select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000003'
 select lives_ok($$
   select * from public.save_custom_ticket_templates('[{
     "id":"custom-secret-probe","title":"Custom private probe","description":"Safe public description","priority":"Medium","categories":["Component Failure"],"course_id":"hw","week":6,"mode":"individual",
-    "scenario":{"requesterId":"cmw-cody","instructorNotes":"SETUP: LOOSE CPU POWER LEAD","inquiryLimit":2,"clientResponses":{
+    "scenario":{"requesterId":"cmw-cody","instructorNotes":"PRIVATE TEST FIXTURE","inquiryLimit":2,"clientResponses":{
       "scope":{"response":"CUSTOM-scope","quality":"exact"},"timing_change":{"response":"CUSTOM-timing","quality":"ambiguous"},
       "symptom_error":{"response":"CUSTOM-symptom","quality":"exact"},"environment_equipment":{"response":"CUSTOM-equipment","quality":"exact"},
       "prior_troubleshooting":{"response":"CUSTOM-SECRET-prior","quality":"mistaken"},"impact_urgency":{"response":"CUSTOM-impact","quality":"exact"}
@@ -434,7 +438,7 @@ select lives_ok($$
   }]'::jsonb)
 $$,'an instructor saves custom metadata and secrets atomically');
 select is((select scenario->>'instructorNotes' from public.ticket_templates where id='custom-secret-probe'),null,'the public template JSON contains no instructor notes');
-select is((select value->'scenario'->>'instructorNotes' from public.get_custom_ticket_templates() item(value) where value->>'id'='custom-secret-probe'),'SETUP: LOOSE CPU POWER LEAD','the admin RPC returns retained instructor notes');
+select is((select value->'scenario'->>'instructorNotes' from public.get_custom_ticket_templates() item(value) where value->>'id'='custom-secret-probe'),'PRIVATE TEST FIXTURE','the admin RPC returns retained instructor notes');
 select lives_ok($$
   select public.create_lab_assignment_with_tickets(
     '10000000-0000-0000-0000-000000000001','Custom private script probe',
@@ -449,6 +453,49 @@ select is((select scenario->>'clientResponses' from public.ticket_templates wher
 select is(
   (public.submit_my_client_inquiry((select id from public.assigned_tickets where scenario_id='custom-secret-probe'),'90000000-0000-0000-0000-000000000001','What was tried already?','prior_troubleshooting')).response,
   'CUSTOM-SECRET-prior','a custom inquiry retrieves only the selected private response end to end'
+);
+reset role;
+
+-- A recorded absence removes only that child from the team gate.
+set local role authenticated;
+select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000003',true);
+select public.create_lab_assignment_with_tickets(
+  '10000000-0000-0000-0000-000000000001','Attendance-safe team probe',
+  '[
+    {"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"absence-probe","course_id":"hw","week":10,"title":"Attendance probe","description":"Team assessment","priority":"Medium","inquiry_limit":0,"team_key":"absence-team","team_name":"Attendance Team","color_name":"Slate","color_hex":"#94A3B8","team_role":"Hands-on technician"},
+    {"student_id":"20000000-0000-0000-0000-000000000002","scenario_id":"absence-probe","course_id":"hw","week":10,"title":"Attendance probe","description":"Team assessment","priority":"Medium","inquiry_limit":0,"team_key":"absence-team","team_name":"Attendance Team","color_name":"Slate","color_hex":"#94A3B8","team_role":"Evidence / documentation"}
+  ]'::jsonb
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000001',true);
+select public.save_my_team_contribution((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id=auth.uid()),'Hands-on technician','Completed the assigned console and cabling verification.');
+select public.update_my_assigned_ticket_status((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id=auth.uid()),'Triage');
+select public.update_my_assigned_ticket_status((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id=auth.uid()),'In Progress');
+select public.update_my_assigned_ticket_status((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id=auth.uid()),'Verification');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','20000000-0000-0000-0000-000000000003',true);
+select lives_ok(
+  $$select public.set_team_member_excused((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000002'),true,'Absent from the scheduled final assessment.')$$,
+  'instructor records an auditable absence'
+);
+select is((select excused_reason from public.team_contributions where student_id='20000000-0000-0000-0000-000000000002' and assigned_ticket_id in(select id from public.assigned_tickets where scenario_id='absence-probe')),'Absent from the scheduled final assessment.','the attendance exception retains its reason');
+update public.assigned_tickets set status='Triage'
+where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000002';
+update public.assigned_tickets set status='In Progress'
+where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000002';
+update public.assigned_tickets set status='Verification'
+where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000002';
+select throws_ok(
+  $$select public.review_assigned_ticket((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000002'),'Approved',true,'No work inferred')$$,
+  '22023','excused_ticket_cannot_be_approved','an excused child ticket cannot receive inferred approval'
+);
+select lives_ok(
+  $$select public.review_assigned_ticket((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000001'),'Approved',true,'Present student work checked')$$,
+  'an absent sibling no longer blocks present teammate sign-off'
 );
 reset role;
 

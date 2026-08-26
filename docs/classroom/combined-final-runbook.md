@@ -26,7 +26,7 @@ Prepare twelve numbered ESD build stations (`H01`-`H12`), four Cisco pods (`P1`-
 | T7 | P3 / B | first accepted PC from T7 | L7 | A |
 | T8 | P4 / B | first accepted PC from T8 | L8 | B |
 
-The instructor records each student's Hardware station, variant, Networking team, initial role, pod, endpoint asset, and fallback asset on the offline master run sheet before students arrive. Team roles are client communication/lead, hands-on technician, and evidence/documentation technician. Roles remain fixed for this assessment; every student must still perform and record at least one console or cabling action.
+The instructor records each student's Hardware station, sealed variant-card identifier, Networking team, pod, endpoint asset, and fallback asset on the offline master run sheet before students arrive. Cinder assigns client communication/lead, hands-on technician, and evidence/documentation roles from the selected roster order and week rotation. After pushing, copy the displayed assignment to the run sheet; do not promise a role before Cinder assigns it. Roles remain fixed for this assessment, and every student must still perform and record at least one console or cabling action.
 
 ## Block 1: IT 161 Hardware final (130 minutes)
 
@@ -40,7 +40,7 @@ The instructor records each student's Hardware station, variant, Networking team
 
 ### Hardware variants
 
-Use the protected IT 161 final variants A-D in equal counts within each wave: memory seating, CPU auxiliary power, display output path, and storage power. Each begins only after the student's initial-build checkpoint. Never stage an unsafe condition or use a damaged component. A student may finish with a documented escalation and still proceed to Networking on the reserved laptop; unresolved Hardware work remains graded in IT 161 only.
+Use four equivalent instructor-held variant cards in equal counts within each wave. Variant contents must never be stored in this public repository, Cinder's browser bundle, or a student card. Each begins only after the student's initial-build checkpoint. Never stage an unsafe condition or use a damaged component. A student may finish with a documented escalation and still proceed to Networking on the reserved laptop; unresolved Hardware work remains graded in IT 161 only.
 
 ### Hardware acceptance gate
 
@@ -63,14 +63,18 @@ Every team must show its subnet calculation; endpoint-to-pod cabling; valid, non
 
 ### Network variant matrix
 
-| Variant | Address block | Instructor-staged fault | Equivalent acceptance |
+| Variant | Address block | Protected fault-card class | Equivalent acceptance |
 | --- | --- | --- | --- |
-| A | `10.44.18.0/27` | Router LAN interface administratively down | Correct subnet, interface state/config, gateway and peer proof |
-| B | `10.44.22.64/27` | One proposed endpoint is the broadcast address | Invalid address identified and replaced before connectivity proof |
-| C | `172.20.48.0/28` | One patch lead fails wire-map testing | Failed physical evidence, known-good replacement, link/connectivity proof |
-| D | `192.168.72.128/28` | One endpoint has the wrong subnet mask | Effective settings compared to calculation and corrected |
+| A | `10.44.18.0/27` | Instructor-held A card | Subnet, physical, switching, interface, endpoint, and connectivity proof |
+| B | `10.44.22.64/27` | Instructor-held B card | Subnet, physical, switching, interface, endpoint, and connectivity proof |
+| C | `172.20.48.0/28` | Instructor-held C card | Subnet, physical, switching, interface, endpoint, and connectivity proof |
+| D | `192.168.72.128/28` | Instructor-held D card | Subnet, physical, switching, interface, endpoint, and connectivity proof |
 
-Do not place the staged-fault column on student cards. Rotation B uses the matrix shown in the assignment table so a pod receives a different fault/address combination after reset.
+Do not copy protected fault-card contents onto student cards. Rotation B uses the variant assignment table so a pod receives a different protected card/address combination after reset.
+
+### Attendance and incomplete-team procedure
+
+Finalize the attending roster before pushing linked tickets. If a student becomes absent after the push, open any sibling in Instructor Verification, locate the missing member under Team readiness, choose **Mark absent**, and record an auditable reason. Cinder removes only that child ticket from the shared contribution/Verification gate; the absent student's ticket remains open for make-up work and receives no inferred score. Use **Restore** if the student returns. A present student who runs out of time is not excused: record the incomplete outcome, leave their ticket open, and defer team approval until their required contribution reaches Verification.
 
 ## Combined deployment proof and fallbacks
 
@@ -119,4 +123,3 @@ FOG imaging contributes only within the five-point connectivity/deployment row. 
 - Confirm each pod is at the approved baseline and each endpoint is restored to its baseline addressing/boot state.
 - Collect printed books only after signatures and ticket/log numbers agree.
 - Enter offline records into Cinder without rewriting student evidence; attach the original paper packet according to the course records process.
-
