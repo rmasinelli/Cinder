@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(58);
+select plan(72);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -303,6 +303,67 @@ select is(
   (select count(*)::integer from public.ticket_status_history where assigned_ticket_id = '40000000-0000-0000-0000-000000000001'),
   6,
   'the lifecycle keeps an auditable status history'
+);
+reset role;
+
+-- Linked team incidents keep the shared result visible while protecting each
+-- student's child ticket and individual evidence.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select lives_ok($$
+  select public.create_lab_assignment_with_tickets(
+    '10000000-0000-0000-0000-000000000001', 'Week 2 teams',
+    '[
+      {"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"team-a","course_id":"hw","week":2,"title":"Shared POST incident","description":"Diagnose the shared workstation.","priority":"Medium","inquiry_limit":0,"team_key":"W2-teams1","team_name":"Ember Team 1","color_name":"Ember","color_hex":"#E8922E","team_role":"Hands-on technician"},
+      {"student_id":"20000000-0000-0000-0000-000000000002","scenario_id":"team-a","course_id":"hw","week":2,"title":"Shared POST incident","description":"Diagnose the shared workstation.","priority":"Medium","inquiry_limit":0,"team_key":"W2-teams1","team_name":"Ember Team 1","color_name":"Ember","color_hex":"#E8922E","team_role":"Evidence / documentation"},
+      {"student_id":"20000000-0000-0000-0000-000000000003","scenario_id":"team-b","course_id":"hw","week":2,"title":"Separate incident","description":"A separate team incident.","priority":"Medium","inquiry_limit":0,"team_key":"W2-teams2","team_name":"Sky Team 2","color_name":"Sky","color_hex":"#38BDF8","team_role":"Client communication / lead"}
+    ]'::jsonb
+  )
+$$, 'instructor creates named team parents with one child ticket per member');
+reset role;
+
+select is((select count(*)::integer from public.team_incidents), 2, 'one parent incident is created per named team');
+select is((select count(*)::integer from public.assigned_tickets where team_incident_id is not null), 3, 'each team member receives an individual child ticket');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select is((select count(*)::integer from public.team_incidents), 1, 'a student sees only their own parent incident');
+select is((select count(*)::integer from public.assigned_tickets where team_incident_id is not null), 1, 'a student cannot read a teammate child ticket');
+select is((select count(*)::integer from public.team_roster((select id from public.assigned_tickets where team_incident_id is not null))), 2, 'the sanitized roster exposes both team members');
+select is((select count(*)::integer from public.team_contributions), 1, 'a student cannot read a teammate individual contribution');
+select lives_ok($$select public.save_my_team_contribution((select id from public.assigned_tickets where team_incident_id is not null),'Hands-on technician','Reseated the memory and recorded the POST result.')$$, 'a student records their own contribution');
+select lives_ok($$select public.save_my_team_shared_outcome((select id from public.assigned_tickets where team_incident_id is not null),'The team verified POST after reseating memory.')$$, 'a team member records the shared verified outcome');
+select throws_ok(
+  $$select public.save_my_team_contribution((select assigned_ticket_id from public.team_contributions where student_id='20000000-0000-0000-0000-000000000002'),'Evidence / documentation','Attempted to alter a teammate contribution.')$$,
+  'P0002', 'team_ticket_not_found', 'a student cannot alter a teammate contribution'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select throws_ok(
+  $$select public.review_assigned_ticket((select id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null),'Approved',true,null)$$,
+  '22023', 'team_contributions_incomplete', 'team sign-off waits for every contribution and verification state'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000002', true);
+select is((select shared_outcome from public.team_incidents),'The team verified POST after reseating memory.','a teammate sees the shared outcome without seeing individual evidence');
+select lives_ok($$select public.save_my_team_contribution((select id from public.assigned_tickets where team_incident_id is not null),'Evidence / documentation','Recorded the shared POST code and verification evidence.')$$, 'the teammate records separate individual evidence');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+update public.assigned_tickets set status='Triage'
+where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null);
+update public.assigned_tickets set status='In Progress'
+where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null);
+update public.assigned_tickets set status='Verification'
+where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null);
+select lives_ok(
+  $$select public.review_assigned_ticket((select id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null),'Approved',true,'Team outcome and individual work checked')$$,
+  'instructor may sign off after all team members are ready'
 );
 reset role;
 

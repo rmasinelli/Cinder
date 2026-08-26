@@ -15,6 +15,7 @@ const expectedMigrations = [
   "20260824201440_restore_legacy_login_memberships.sql",
   "20260826165024_readiness_checks.sql",
   "20260826180023_scripted_client_inquiries.sql",
+  "20260826184555_linked_team_incidents.sql",
 ];
 
 const baseline = readFileSync(
