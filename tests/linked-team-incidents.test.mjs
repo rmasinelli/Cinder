@@ -27,6 +27,8 @@ test("individual contributions remain private and gate sign-off",()=>{
   assert.match(app,/save_my_team_shared_outcome/);
   assert.match(app,/key={`team-\$\{at\.id\}`}/);
   assert.match(app,/key={`client-\$\{at\.id\}`}/);
+  assert.match(app,/if\(ticket\.team_incident_id\)supabase\.rpc\("team_roster"/);
+  assert.match(app,/key={member\.student_id}/);
 });
 
 test("team identity is not conveyed by color alone",()=>{

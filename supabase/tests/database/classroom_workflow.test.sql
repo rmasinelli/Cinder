@@ -353,7 +353,7 @@ reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000002', true);
 select is((select shared_outcome from public.team_incidents),'The team verified POST after reseating memory.','a teammate sees the shared outcome without seeing individual evidence');
-select throws_ok($$select public.save_my_team_shared_outcome((select id from public.assigned_tickets where team_incident_id is not null),'A stale browser tries to replace the shared result.',null)$$,'40001','shared_outcome_changed','a stale team panel cannot silently overwrite a teammate outcome');
+select throws_ok($$select public.save_my_team_shared_outcome((select id from public.assigned_tickets where team_incident_id is not null),'A stale browser tries to replace the shared result.',null)$$,'P0001','shared_outcome_changed','a stale team panel cannot silently overwrite a teammate outcome');
 select lives_ok($$select public.save_my_team_contribution((select id from public.assigned_tickets where team_incident_id is not null),'Evidence / documentation','Recorded the shared POST code and verification evidence.')$$, 'the teammate records separate individual evidence');
 reset role;
 

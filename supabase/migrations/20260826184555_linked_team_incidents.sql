@@ -87,7 +87,7 @@ begin
   select shared_outcome_updated_at into v_current_updated_at from public.team_incidents
   where id=v_incident_id for update;
   if p_expected_updated_at is distinct from v_current_updated_at and v_current_updated_at is not null
-    then raise exception 'shared_outcome_changed' using errcode='40001'; end if;
+    then raise exception 'shared_outcome_changed' using errcode='P0001'; end if;
   update public.team_incidents set shared_outcome=btrim(p_shared_outcome),
     shared_outcome_updated_by=v_user_id,shared_outcome_updated_at=now() where id=v_incident_id;
 end; $$;
@@ -95,14 +95,14 @@ revoke all on function public.save_my_team_shared_outcome(uuid,text,timestamptz)
 grant execute on function public.save_my_team_shared_outcome(uuid,text,timestamptz) to authenticated;
 
 create or replace function public.team_roster(p_assigned_ticket_id uuid)
-returns table(student_alias text, team_role text, contribution_recorded boolean, ticket_status text)
+returns table(student_id uuid, student_alias text, team_role text, contribution_recorded boolean, ticket_status text)
 language plpgsql security definer set search_path = '' as $$
 declare v_incident uuid;
 begin
-  select team_incident_id into v_incident from public.assigned_tickets
-  where id=p_assigned_ticket_id and (student_id=auth.uid() or (select private.is_admin()));
+  select owned_ticket.team_incident_id into v_incident from public.assigned_tickets owned_ticket
+  where owned_ticket.id=p_assigned_ticket_id and (owned_ticket.student_id=auth.uid() or (select private.is_admin()));
   if v_incident is null then raise exception 'team_ticket_not_found' using errcode='P0002'; end if;
-  return query select profile.alias, contribution.team_role, contribution.contribution is not null, ticket.status
+  return query select ticket.student_id, profile.alias, contribution.team_role, contribution.contribution is not null, ticket.status
   from public.assigned_tickets ticket join public.profiles profile on profile.id=ticket.student_id
   left join public.team_contributions contribution on contribution.assigned_ticket_id=ticket.id
   where ticket.team_incident_id=v_incident order by ticket.created_at,profile.alias;
