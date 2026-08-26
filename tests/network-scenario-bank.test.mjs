@@ -3,33 +3,35 @@ import test from "node:test";
 import { IT111_SCENARIO_BANK, NETWORK_FINAL_SCENARIOS, NETWORK_SCENARIOS } from "../src/data/networkScenarioBank.js";
 import { PERSON_BY_ID } from "../src/data/people.js";
 import { readFileSync } from "node:fs";
+import { FIELD_JOURNAL_PAGES } from "../src/data/fieldJournalPages.js";
 
 const app=readFileSync(new URL("../src/App.jsx",import.meta.url),"utf8");
-
-const purposes=["scope","timing_change","symptom_error","environment_equipment","prior_troubleshooting","impact_urgency"];
+const source=readFileSync(new URL("../src/data/networkScenarioBank.js",import.meta.url),"utf8");
+const migration=readFileSync(new URL("../supabase/migrations/20260826202605_protect_builtin_scenario_secrets.sql",import.meta.url),"utf8");
 
 test("IT 111 provides one scenario for each of nine labs",()=>{
   assert.equal(NETWORK_SCENARIOS.length,9);
   assert.deepEqual(NETWORK_SCENARIOS.map(item=>item.week),[1,2,3,4,5,6,7,8,9]);
 });
 
-test("every networking lab has readiness, client, reset, branch, and print criteria",()=>{
+test("every networking lab exposes student-safe metadata and canonical book routing",()=>{
   for(const item of IT111_SCENARIO_BANK){
     assert.equal(item.readiness.length,5,`${item.id} readiness count`);
     assert.ok(item.readiness.every(prompt=>prompt.length>=25),`${item.id} readiness prompts`);
     assert.ok(item.inquiryLimit>=2&&item.inquiryLimit<=3,`${item.id} inquiry limit`);
-    assert.deepEqual(Object.keys(item.clientResponses).sort(),[...purposes].sort(),`${item.id} client purposes`);
-    for(const marker of ["SETUP:","DIAGNOSTIC BRANCHES:","VERIFY:","RESET:","PRINTED SERVICE LOG:"]) assert.match(item.instructorNotes,new RegExp(marker),`${item.id} ${marker}`);
     assert.ok(item.knowledgeRefs.length>=2,`${item.id} knowledge references`);
+    assert.ok(item.knowledgeRefs.every(ref=>FIELD_JOURNAL_PAGES.has(ref)),`${item.id} canonical refs`);
+    assert.equal(item.clientResponses,undefined);
+    assert.equal(item.instructorNotes,undefined);
+    assert.match(migration,new RegExp(`'${item.id}'`),`${item.id} private seed`);
   }
 });
 
 test("the assessed bank excludes VLAN and static-route configuration",()=>{
   for(const item of IT111_SCENARIO_BANK){
-    const assessed=`${item.description}\n${item.instructorNotes}`;
-    assert.doesNotMatch(assessed,/\b(?:vlan \d+|encapsulation dot1q|ip route \d)/i,item.id);
-    assert.match(item.instructorNotes,/SCOPE BOUNDARY: VLAN and static-route configuration are not assessed or authorized\./,item.id);
+    assert.doesNotMatch(item.description,/\b(?:vlan \d+|encapsulation dot1q|ip route \d)/i,item.id);
   }
+  assert.match(migration,/SCOPE BOUNDARY: VLAN and static-route configuration are not assessed or authorized\./);
 });
 
 test("new scenario ids preserve historical ticket metadata and requesters exist",()=>{
@@ -41,13 +43,12 @@ test("new scenario ids preserve historical ticket metadata and requesters exist"
 test("team labs require individual console or cabling participation",()=>{
   const teamLabs=IT111_SCENARIO_BANK.filter(item=>item.mode==="teams");
   assert.ok(teamLabs.length>=7);
-  for(const item of teamLabs) assert.match(item.instructorNotes,/Every student must|Every student|individual console\/cabling/i,item.id);
+  assert.match(migration,/Every student must|individual console\/cabling/i);
 });
 
 test("final variants are equivalent without being identical",()=>{
   assert.equal(NETWORK_FINAL_SCENARIOS.length,4);
   assert.equal(new Set(NETWORK_FINAL_SCENARIOS.map(item=>item.description.match(/address block ([0-9./]+)/)?.[1])).size,4);
-  assert.equal(new Set(NETWORK_FINAL_SCENARIOS.map(item=>item.instructorNotes.match(/sealed fault: ([^.]+)/)?.[1])).size,4);
   for(const item of NETWORK_FINAL_SCENARIOS){
     assert.match(item.description,/Cable the pod and laptops/i);
     assert.match(item.description,/calculate and assign valid IPv4/i);
@@ -58,9 +59,10 @@ test("final variants are equivalent without being identical",()=>{
 
 test("final client replies expose symptoms without disclosing staged faults",()=>{
   for(const item of NETWORK_FINAL_SCENARIOS){
-    assert.match(item.clientResponses.symptom_error.response,/cannot reach its configured gateway/i);
-    assert.doesNotMatch(item.clientResponses.symptom_error.response,/administratively down|broadcast address|wire-map|subnet mask/i);
+    assert.equal(item.clientResponses,undefined);
   }
+  assert.doesNotMatch(source,/router interface administratively down|one endpoint uses the broadcast address|one patch lead fails wire-map testing|one endpoint has the wrong subnet mask/i);
+  assert.match(migration,/cannot reach its configured gateway/i);
 });
 
 test("the instructor scenario preview exposes readiness and Field Journal routing",()=>{

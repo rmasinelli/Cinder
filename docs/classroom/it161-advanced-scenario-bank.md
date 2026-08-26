@@ -6,7 +6,9 @@ Status: implementation companion for Issue #43 and the Fall 2026 lab blueprint.
 
 The advanced bank extends the earlier safety, component, assembly, and firmware work without duplicating it. It assesses hardware triage and firmware verification—not operating-system installation, driver management, or software repair.
 
-Every scenario in `src/data/hardwareAdvancedBank.js` includes five readiness prompts, six controlled client replies, preparation, equipment, safe variants, discriminating branches, reset, sign-off, and printed Service Log criteria. Client reports are incomplete but fair: the root cause is obtainable from a useful inquiry, physical inspection, manufacturer research, or a safe hands-on test.
+Every browser-visible scenario in `src/data/hardwareAdvancedBank.js` includes five readiness prompts and canonical printed Field Journal references. Controlled client replies, staged variants, and instructor setup notes live only in `private.builtin_scenario_secrets`; the browser retrieves instructor notes only through the admin-only RPC. Client reports are incomplete but fair: the root cause is obtainable from a useful inquiry, physical inspection, manufacturer research, or a safe hands-on test.
+
+`knowledgeRefs` are canonical page names in the printed Field Journal. They are intentionally routing labels rather than Cinder Knowledge Base links.
 
 ## Sequence
 
@@ -64,4 +66,3 @@ Each student must build, explain component function/compatibility, research manu
 - Personal hands-on contribution is recorded before sign-off.
 - Firmware detection, repeated startup, and reset are observed.
 - Kit inventory and safe storage are complete before the next rotation.
-

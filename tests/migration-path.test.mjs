@@ -16,6 +16,7 @@ const expectedMigrations = [
   "20260826165024_readiness_checks.sql",
   "20260826180023_scripted_client_inquiries.sql",
   "20260826184555_linked_team_incidents.sql",
+  "20260826202605_protect_builtin_scenario_secrets.sql",
 ];
 
 const baseline = readFileSync(

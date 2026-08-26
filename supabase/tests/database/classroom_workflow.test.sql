@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(75);
+select plan(80);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -377,6 +377,39 @@ select is(
   (select count(*)::integer from public.assigned_tickets where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null) and status='Closed'),
   2, 'every team child ticket can reach Closed'
 );
+reset role;
+
+select has_table(
+  'private', 'builtin_scenario_secrets',
+  'built-in answer keys live outside the public schema'
+);
+select ok(
+  not has_table_privilege('authenticated', 'private.builtin_scenario_secrets', 'SELECT'),
+  'authenticated browsers cannot select built-in answer keys'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select throws_ok(
+  $$select * from public.get_builtin_scenario_instructor_notes()$$,
+  '42501', 'admin_required',
+  'students cannot retrieve instructor notes'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select is(
+  (select count(*)::integer from public.get_builtin_scenario_instructor_notes()),
+  37,
+  'instructors receive notes for every built-in scenario without client scripts'
+);
+select lives_ok($$
+  select public.create_lab_assignment_with_tickets(
+    '10000000-0000-0000-0000-000000000001', 'Private built-in script probe',
+    '[{"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"sc-hw-f26-05","course_id":"hw","week":5,"title":"Private script probe","description":"Safe browser payload.","priority":"High","inquiry_limit":2}]'::jsonb
+  )
+$$, 'assignment creation resolves built-in client scripts without receiving them from the browser');
 reset role;
 
 select * from finish();
