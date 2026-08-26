@@ -1,6 +1,8 @@
+import { IT111_SCENARIO_BANK } from "./networkScenarioBank.js";
+
 // ─────────────────────────────────────────────
 // scenarios.js
-// 30 pre-built scenarios — 10 per course.
+// Built-in scenario banks for Networking, Hardware, and Security.
 //
 // Tickets land in the student's queue as real
 // client requests. NO lab framing is shown to
@@ -22,7 +24,7 @@
 //                 What the student actually does with real equipment.
 // ─────────────────────────────────────────────
 
-export const SCENARIOS = [
+const LEGACY_SCENARIOS = [
 
   // ══════════════════════════════════════════
   // NETWORKING FUNDAMENTALS (net)
@@ -533,4 +535,9 @@ Ember Service Operations`,
 `Capstone: Teams harden the complete lab environment built across all three courses. OS hardening, network segmentation, access controls, monitoring. Every change documented as a ticket. Field Journal: complete hardening checklist with evidence for each control, lessons learned across all three courses, final security posture statement.`,
   },
 
+];
+
+export const SCENARIOS = [
+  ...IT111_SCENARIO_BANK,
+  ...LEGACY_SCENARIOS.filter(scenario=>scenario.courseId!=="net"),
 ];
