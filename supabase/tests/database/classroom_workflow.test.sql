@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(40);
+select plan(53);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -166,6 +166,36 @@ select is(
   (select count(*)::integer from public.readiness_attempts), 2,
   'both attempts remain recorded for low-stakes tracking'
 );
+reset role;
+
+select ok(not has_function_privilege('anon', 'public.submit_my_client_inquiry(uuid,uuid,text,text)', 'EXECUTE'), 'anonymous users cannot submit client inquiries');
+select ok(has_function_privilege('authenticated', 'public.submit_my_client_inquiry(uuid,uuid,text,text)', 'EXECUTE'), 'authenticated students may call the ownership-scoped inquiry RPC');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select lives_ok($$update public.assigned_tickets set inquiry_limit = 2, client_responses = '{"scope":{"response":"Only the desktop is affected.","quality":"exact"},"symptom_error":{"response":"It beeps sometimes, I think.","quality":"ambiguous"}}'::jsonb where id = '40000000-0000-0000-0000-000000000001'$$, 'instructor configures a ticket-specific response script');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select throws_ok($$select public.submit_my_client_inquiry('40000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','  ','scope')$$, 'P0001', 'question_required', 'a blank question cannot reveal a response');
+select lives_ok($$select public.submit_my_client_inquiry('40000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000002','Is every workstation affected?','scope')$$, 'the ticket owner receives the scripted response');
+select lives_ok($$select public.submit_my_client_inquiry('40000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000002','Is every workstation affected?','scope')$$, 'retrying the same request is idempotent');
+select is((select count(*)::integer from public.ticket_client_inquiries), 1, 'an idempotent retry does not consume another inquiry');
+select lives_ok($$select public.submit_my_client_inquiry('40000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000003','What exactly do you hear?','symptom_error')$$, 'a second distinct inquiry is recorded');
+select throws_ok($$select public.submit_my_client_inquiry('40000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000004','When did it start?','timing_change')$$, 'P0001', 'inquiry_limit_reached', 'the server enforces the ticket-specific inquiry limit');
+select is((select count(*)::integer from public.ticket_client_inquiries), 2, 'only two inquiries are preserved at the configured limit');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000002', true);
+select is((select count(*)::integer from public.ticket_client_inquiries), 0, 'another student cannot read private inquiry history');
+select throws_ok($$select public.submit_my_client_inquiry('40000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000005','Can I inspect this?','scope')$$, 'P0001', 'ticket_not_found', 'another student cannot inquire on a ticket they do not own');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select is((select count(*)::integer from public.ticket_client_inquiries), 2, 'the instructor can review complete inquiry history');
 reset role;
 
 set local role authenticated;
