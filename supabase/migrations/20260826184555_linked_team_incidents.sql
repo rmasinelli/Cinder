@@ -72,9 +72,11 @@ end; $$;
 revoke all on function public.save_my_team_contribution(uuid,text,text) from public,anon,authenticated;
 grant execute on function public.save_my_team_contribution(uuid,text,text) to authenticated;
 
-create or replace function public.save_my_team_shared_outcome(p_assigned_ticket_id uuid,p_shared_outcome text)
+create or replace function public.save_my_team_shared_outcome(
+  p_assigned_ticket_id uuid,p_shared_outcome text,p_expected_updated_at timestamptz default null
+)
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_user_id uuid:=auth.uid(); v_incident_id uuid;
+declare v_user_id uuid:=auth.uid(); v_incident_id uuid; v_current_updated_at timestamptz;
 begin
   if v_user_id is null then raise exception 'authentication_required' using errcode='28000'; end if;
   select team_incident_id into v_incident_id from public.assigned_tickets
@@ -82,11 +84,15 @@ begin
   if v_incident_id is null then raise exception 'team_ticket_not_found' using errcode='P0002'; end if;
   if char_length(btrim(coalesce(p_shared_outcome,''))) not between 10 and 2000
     then raise exception 'shared_outcome_required' using errcode='22023'; end if;
+  select shared_outcome_updated_at into v_current_updated_at from public.team_incidents
+  where id=v_incident_id for update;
+  if p_expected_updated_at is distinct from v_current_updated_at and v_current_updated_at is not null
+    then raise exception 'shared_outcome_changed' using errcode='40001'; end if;
   update public.team_incidents set shared_outcome=btrim(p_shared_outcome),
     shared_outcome_updated_by=v_user_id,shared_outcome_updated_at=now() where id=v_incident_id;
 end; $$;
-revoke all on function public.save_my_team_shared_outcome(uuid,text) from public,anon,authenticated;
-grant execute on function public.save_my_team_shared_outcome(uuid,text) to authenticated;
+revoke all on function public.save_my_team_shared_outcome(uuid,text,timestamptz) from public,anon,authenticated;
+grant execute on function public.save_my_team_shared_outcome(uuid,text,timestamptz) to authenticated;
 
 create or replace function public.team_roster(p_assigned_ticket_id uuid)
 returns table(student_alias text, team_role text, contribution_recorded boolean, ticket_status text)
@@ -147,12 +153,12 @@ begin
   if p_action in ('Returned','Reopened') and nullif(btrim(p_feedback),'') is null then raise exception 'actionable_feedback_required' using errcode='22023'; end if;
   select status,team_incident_id into v_current_status,v_incident from public.assigned_tickets where id=p_assigned_ticket_id for update;
   if not found then raise exception 'ticket_not_found' using errcode='P0002'; end if;
+  if (p_action in ('Approved','Returned') and v_current_status<>'Verification') or (p_action='Reopened' and v_current_status<>'Closed') then raise exception 'invalid_review_state:%:%',v_current_status,p_action using errcode='22023'; end if;
   if p_action='Approved' and v_incident is not null and exists(
     select 1 from public.assigned_tickets sibling left join public.team_contributions contribution on contribution.assigned_ticket_id=sibling.id
-    where sibling.team_incident_id=v_incident and (contribution.contribution is null or sibling.status<>'Verification')
+    where sibling.team_incident_id=v_incident and (contribution.contribution is null or sibling.status not in ('Verification','Closed'))
   ) then raise exception 'team_contributions_incomplete' using errcode='22023'; end if;
   v_next_status:=case p_action when 'Approved' then 'Closed' when 'Returned' then 'In Progress' when 'Reopened' then 'Triage' end;
-  if (p_action in ('Approved','Returned') and v_current_status<>'Verification') or (p_action='Reopened' and v_current_status<>'Closed') then raise exception 'invalid_review_state:%:%',v_current_status,p_action using errcode='22023'; end if;
   select alias into v_reviewer_alias from public.profiles where id=v_reviewer_id;
   update public.assigned_tickets set status=v_next_status where id=p_assigned_ticket_id;
   insert into public.ticket_verification_reviews(assigned_ticket_id,reviewer_id,reviewer_alias,action,manual_checked,feedback)

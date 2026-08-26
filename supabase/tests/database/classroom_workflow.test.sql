@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(72);
+select plan(75);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -341,6 +341,9 @@ reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+update public.assigned_tickets set status='Triage' where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null;
+update public.assigned_tickets set status='In Progress' where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null;
+update public.assigned_tickets set status='Verification' where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null;
 select throws_ok(
   $$select public.review_assigned_ticket((select id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null),'Approved',true,null)$$,
   '22023', 'team_contributions_incomplete', 'team sign-off waits for every contribution and verification state'
@@ -350,20 +353,29 @@ reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000002', true);
 select is((select shared_outcome from public.team_incidents),'The team verified POST after reseating memory.','a teammate sees the shared outcome without seeing individual evidence');
+select throws_ok($$select public.save_my_team_shared_outcome((select id from public.assigned_tickets where team_incident_id is not null),'A stale browser tries to replace the shared result.',null)$$,'40001','shared_outcome_changed','a stale team panel cannot silently overwrite a teammate outcome');
 select lives_ok($$select public.save_my_team_contribution((select id from public.assigned_tickets where team_incident_id is not null),'Evidence / documentation','Recorded the shared POST code and verification evidence.')$$, 'the teammate records separate individual evidence');
 reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
 update public.assigned_tickets set status='Triage'
-where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null);
+where student_id='20000000-0000-0000-0000-000000000002' and team_incident_id is not null;
 update public.assigned_tickets set status='In Progress'
-where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null);
+where student_id='20000000-0000-0000-0000-000000000002' and team_incident_id is not null;
 update public.assigned_tickets set status='Verification'
-where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null);
+where student_id='20000000-0000-0000-0000-000000000002' and team_incident_id is not null;
 select lives_ok(
   $$select public.review_assigned_ticket((select id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null),'Approved',true,'Team outcome and individual work checked')$$,
   'instructor may sign off after all team members are ready'
+);
+select lives_ok(
+  $$select public.review_assigned_ticket((select id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000002' and team_incident_id is not null),'Approved',true,'Second individual contribution checked')$$,
+  'closing the first child does not block sign-off for the next teammate'
+);
+select is(
+  (select count(*)::integer from public.assigned_tickets where team_incident_id=(select team_incident_id from public.assigned_tickets where student_id='20000000-0000-0000-0000-000000000001' and team_incident_id is not null) and status='Closed'),
+  2, 'every team child ticket can reach Closed'
 );
 reset role;
 

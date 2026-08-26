@@ -21,10 +21,12 @@ test("roles rotate and larger teams receive only the extra roles they need",()=>
 test("individual contributions remain private and gate sign-off",()=>{
   assert.match(migration,/team contributions: own or admin read/);
   assert.match(migration,/team_contributions_incomplete/);
-  assert.match(migration,/sibling\.status<>'Verification'/);
+  assert.match(migration,/sibling\.status not in \('Verification','Closed'\)/);
   assert.match(app,/Record only what you personally contributed/);
   assert.match(app,/save_my_team_contribution/);
   assert.match(app,/save_my_team_shared_outcome/);
+  assert.match(app,/key={`team-\$\{at\.id\}`}/);
+  assert.match(app,/key={`client-\$\{at\.id\}`}/);
 });
 
 test("team identity is not conveyed by color alone",()=>{
