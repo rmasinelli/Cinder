@@ -1,4 +1,5 @@
 alter table public.team_contributions
+  alter column team_role drop not null,
   add column excused_at timestamptz,
   add column excused_by uuid references public.profiles(id) on delete set null,
   add column excused_reason text,
@@ -12,19 +13,27 @@ create or replace function public.set_team_member_excused(
   p_assigned_ticket_id uuid,p_excused boolean,p_reason text default null
 )
 returns void language plpgsql security definer set search_path='' as $$
+declare v_student_id uuid;
 begin
   if not (select private.is_admin()) then raise exception 'admin_required' using errcode='42501'; end if;
-  if not exists(select 1 from public.assigned_tickets where id=p_assigned_ticket_id and team_incident_id is not null)
-    then raise exception 'team_ticket_not_found' using errcode='P0002'; end if;
+  select student_id into v_student_id from public.assigned_tickets
+  where id=p_assigned_ticket_id and team_incident_id is not null;
+  if not found then raise exception 'team_ticket_not_found' using errcode='P0002'; end if;
   if p_excused and char_length(btrim(coalesce(p_reason,''))) not between 10 and 500
     then raise exception 'excused_reason_required' using errcode='22023'; end if;
-  update public.team_contributions set
-    excused_at=case when p_excused then now() else null end,
-    excused_by=case when p_excused then auth.uid() else null end,
-    excused_reason=case when p_excused then btrim(p_reason) else null end,
-    updated_at=now()
-  where assigned_ticket_id=p_assigned_ticket_id;
-  if not found then raise exception 'team_contribution_not_found' using errcode='P0002'; end if;
+  if p_excused then
+    insert into public.team_contributions(
+      assigned_ticket_id,student_id,team_role,contribution,excused_at,excused_by,excused_reason,updated_at
+    ) values(
+      p_assigned_ticket_id,v_student_id,null,null,now(),auth.uid(),btrim(p_reason),now()
+    ) on conflict(assigned_ticket_id) do update set
+      excused_at=excluded.excused_at,excused_by=excluded.excused_by,
+      excused_reason=excluded.excused_reason,updated_at=now();
+  else
+    update public.team_contributions set excused_at=null,excused_by=null,excused_reason=null,updated_at=now()
+    where assigned_ticket_id=p_assigned_ticket_id;
+    if not found then raise exception 'team_contribution_not_found' using errcode='P0002'; end if;
+  end if;
 end; $$;
 revoke all on function public.set_team_member_excused(uuid,boolean,text) from public,anon,authenticated;
 grant execute on function public.set_team_member_excused(uuid,boolean,text) to authenticated;

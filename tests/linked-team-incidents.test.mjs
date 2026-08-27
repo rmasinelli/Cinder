@@ -17,9 +17,16 @@ test("team assignments create named color-coded parent incidents and child ticke
 test("an auditable absence does not block present teammates",()=>{
   assert.match(attendanceMigration,/set_team_member_excused/);
   assert.match(attendanceMigration,/excused_reason_required/);
+  assert.match(attendanceMigration,/alter column team_role drop not null/);
+  assert.match(attendanceMigration,/insert into public\.team_contributions/);
   assert.match(attendanceMigration,/contribution\.excused_at is null/);
   assert.match(app,/Mark absent/);
   assert.match(app,/Restore/);
+});
+
+test("a missing private pack produces an actionable instructor error",()=>{
+  assert.match(app,/isBuiltin&&rowsErr\.message\.includes\("incomplete_client_responses"\)/);
+  assert.match(app,/private instructor pack has not been loaded/);
 });
 
 test("roles rotate and larger teams receive only the extra roles they need",()=>{

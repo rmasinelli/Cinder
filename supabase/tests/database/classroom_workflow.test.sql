@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(96);
+select plan(99);
 
 -- Fixed identities keep failures readable while the surrounding transaction
 -- makes every run isolated and repeatable.
@@ -404,6 +404,12 @@ select is(
   0,
   'a clean database contains no committed assessment keys'
 );
+select throws_ok($$
+  select public.create_lab_assignment_with_tickets(
+    '10000000-0000-0000-0000-000000000001','Missing private pack probe',
+    '[{"student_id":"20000000-0000-0000-0000-000000000001","scenario_id":"sc-hw-f26-05","course_id":"hw","week":5,"title":"Private pack probe","description":"Safe description","priority":"Medium","inquiry_limit":2}]'::jsonb
+  )
+$$,'P0001','incomplete_client_responses','a clean database fails closed until the private pack is loaded');
 select lives_ok($$
   select public.load_builtin_scenario_secrets('[{"scenario_id":"sc-hw-f26-05","instructor_notes":"PRIVATE TEST FIXTURE","client_responses":{"scope":{"response":"fixture scope","quality":"exact"},"timing_change":{"response":"fixture timing","quality":"ambiguous"},"symptom_error":{"response":"fixture symptom","quality":"exact"},"environment_equipment":{"response":"fixture equipment","quality":"exact"},"prior_troubleshooting":{"response":"fixture prior","quality":"mistaken"},"impact_urgency":{"response":"fixture impact","quality":"exact"}}}]'::jsonb,true)
 $$,'an instructor can atomically load a git-ignored secret pack');
@@ -496,6 +502,20 @@ select throws_ok(
 select lives_ok(
   $$select public.review_assigned_ticket((select id from public.assigned_tickets where scenario_id='absence-probe' and student_id='20000000-0000-0000-0000-000000000001'),'Approved',true,'Present student work checked')$$,
   'an absent sibling no longer blocks present teammate sign-off'
+);
+
+select public.create_lab_assignment_with_tickets(
+  '10000000-0000-0000-0000-000000000001','Missing role attendance probe',
+  '[{"student_id":"20000000-0000-0000-0000-000000000002","scenario_id":"missing-role-probe","course_id":"hw","week":10,"title":"Missing role probe","description":"Legacy team ticket","priority":"Medium","inquiry_limit":0,"team_key":"missing-role-team","team_name":"Legacy Team","color_name":"Slate","color_hex":"#94A3B8"}]'::jsonb
+);
+select lives_ok(
+  $$select public.set_team_member_excused((select id from public.assigned_tickets where scenario_id='missing-role-probe'),true,'Absent before a team role was assigned.')$$,
+  'an instructor can excuse a legacy team ticket with no contribution row'
+);
+select is(
+  (select team_role from public.team_contributions where assigned_ticket_id=(select id from public.assigned_tickets where scenario_id='missing-role-probe')),
+  null,
+  'the attendance record does not invent a missing role'
 );
 reset role;
 

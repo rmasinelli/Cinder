@@ -406,6 +406,7 @@ export default function App() {
   async function pushLabAssignment(courseId, week, scenarioId, mode, studentIds, classId, requestedTeamSize=3) {
     const scenario = SCENARIOS.find(s=>s.id===scenarioId)||customScenarios.find(s=>s.id===scenarioId);
     if (!scenario) return;
+    const isBuiltin=SCENARIOS.some(item=>item.id===scenarioId);
 
     const teamSize=mode==="pairs"?2:mode==="teams"?Math.max(3,Math.min(5,requestedTeamSize)):0;
     const palette=[
@@ -435,7 +436,13 @@ export default function App() {
       p_week_label:`Week ${week} — ${scenario.title}`,
       p_tickets:rows,
     });
-    if (rowsErr) { showToast("Push failed: "+rowsErr.message,"error"); return; }
+    if (rowsErr) {
+      const missingPrivatePack=isBuiltin&&rowsErr.message.includes("incomplete_client_responses");
+      showToast(missingPrivatePack
+        ? "Push blocked: this built-in lab's private instructor pack has not been loaded. Load or rotate the pack, then try again."
+        : "Push failed: "+rowsErr.message,"error");
+      return;
+    }
     showToast(`Week ${week} lab pushed to ${studentIds.length} student(s)!`);
   }
 
