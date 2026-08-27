@@ -46,12 +46,7 @@ Never open a power supply, create a short, energize exposed conductors, damage c
 
 ## Final equivalence
 
-Variants A-D use the same compatible loose-parts kit and assessment sequence. The staged fault changes only after the student reaches the initial-build checkpoint:
-
-- A: memory seating;
-- B: CPU auxiliary power;
-- C: display output path; and
-- D: storage power.
+Variants A-D use the same compatible loose-parts kit and assessment sequence. Their rotated fault contents live only on instructor-held cards and in the git-ignored private scenario pack. This public document records equivalence and safety requirements, never the answer-key mapping.
 
 Each student must build, explain component function/compatibility, research manufacturer guidance, diagnose with evidence, show three cold starts and stable firmware inventory, then disassemble and inventory the station. Known-good components are the troubleshooting fallback. A known-good laptop is the downstream Networking fallback; it does not replace the Hardware assessment.
 

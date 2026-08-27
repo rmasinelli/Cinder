@@ -4,6 +4,7 @@ import test from "node:test";
 
 const app=readFileSync(new URL("../src/App.jsx",import.meta.url),"utf8");
 const migration=readFileSync(new URL("../supabase/migrations/20260826184555_linked_team_incidents.sql",import.meta.url),"utf8");
+const attendanceMigration=readFileSync(new URL("../supabase/migrations/20260826221632_team_absence_and_private_scenario_loader.sql",import.meta.url),"utf8");
 
 test("team assignments create named color-coded parent incidents and child tickets",()=>{
   assert.match(migration,/create table public\.team_incidents/);
@@ -11,6 +12,21 @@ test("team assignments create named color-coded parent incidents and child ticke
   assert.match(app,/team_name:teamKey\?`\$\{color\[0\]\} Team \$\{teamIndex\+1\}`/);
   assert.match(app,/color_name/);
   assert.match(app,/Students per team/);
+});
+
+test("an auditable absence does not block present teammates",()=>{
+  assert.match(attendanceMigration,/set_team_member_excused/);
+  assert.match(attendanceMigration,/excused_reason_required/);
+  assert.match(attendanceMigration,/alter column team_role drop not null/);
+  assert.match(attendanceMigration,/insert into public\.team_contributions/);
+  assert.match(attendanceMigration,/contribution\.excused_at is null/);
+  assert.match(app,/Mark absent/);
+  assert.match(app,/Restore/);
+});
+
+test("a missing private pack produces an actionable instructor error",()=>{
+  assert.match(app,/isBuiltin&&rowsErr\.message\.includes\("incomplete_client_responses"\)/);
+  assert.match(app,/private instructor pack has not been loaded/);
 });
 
 test("roles rotate and larger teams receive only the extra roles they need",()=>{
