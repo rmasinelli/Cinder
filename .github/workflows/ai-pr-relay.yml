@@ -1,0 +1,129 @@
+name: AI PR Relay
+
+on:
+  pull_request:
+    types: [opened, labeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to relay
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-pr-relay-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+env:
+  MAX_ROUNDS: '3'
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ai:needs-review')
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.meta.outputs.pr }}
+      origin: ${{ steps.meta.outputs.origin }}
+      head: ${{ steps.meta.outputs.head }}
+    steps:
+      - name: Resolve PR and origin
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pr="${EVENT_PR:-${INPUT_PR:-}}"
+          test -n "$pr"
+          labels="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          if grep -qx 'ai:origin-codex' <<<"$labels"; then origin=codex
+          elif grep -qx 'ai:origin-claude' <<<"$labels"; then origin=claude
+          else
+            echo 'PR must have ai:origin-codex or ai:origin-claude' >&2
+            exit 1
+          fi
+          head="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "origin=$origin" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --add-label 'ai:reviewing' || true
+
+  review-1:
+    needs: prepare
+    uses: ./.github/workflows/ai-review-round.yml
+    with:
+      pr_number: ${{ needs.prepare.outputs.pr }}
+      origin: ${{ needs.prepare.outputs.origin }}
+      round: 1
+    secrets: inherit
+
+  fix-1:
+    needs: [prepare, review-1]
+    if: needs.review-1.outputs.decision == 'changes_requested'
+    uses: ./.github/workflows/ai-fix-round.yml
+    with:
+      pr_number: ${{ needs.prepare.outputs.pr }}
+      origin: ${{ needs.prepare.outputs.origin }}
+      round: 1
+      review: ${{ needs.review-1.outputs.review }}
+    secrets: inherit
+
+  review-2:
+    needs: [prepare, review-1, fix-1]
+    if: always() && needs.review-1.outputs.decision == 'changes_requested' && needs.fix-1.result == 'success'
+    uses: ./.github/workflows/ai-review-round.yml
+    with:
+      pr_number: ${{ needs.prepare.outputs.pr }}
+      origin: ${{ needs.prepare.outputs.origin }}
+      round: 2
+    secrets: inherit
+
+  fix-2:
+    needs: [prepare, review-2]
+    if: needs.review-2.outputs.decision == 'changes_requested'
+    uses: ./.github/workflows/ai-fix-round.yml
+    with:
+      pr_number: ${{ needs.prepare.outputs.pr }}
+      origin: ${{ needs.prepare.outputs.origin }}
+      round: 2
+      review: ${{ needs.review-2.outputs.review }}
+    secrets: inherit
+
+  review-3:
+    needs: [prepare, review-2, fix-2]
+    if: always() && needs.review-2.outputs.decision == 'changes_requested' && needs.fix-2.result == 'success'
+    uses: ./.github/workflows/ai-review-round.yml
+    with:
+      pr_number: ${{ needs.prepare.outputs.pr }}
+      origin: ${{ needs.prepare.outputs.origin }}
+      round: 3
+    secrets: inherit
+
+  finalize:
+    needs: [prepare, review-1, review-2, review-3]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set final state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.prepare.outputs.pr }}
+          R1: ${{ needs.review-1.outputs.decision }}
+          R2: ${{ needs.review-2.outputs.decision }}
+          R3: ${{ needs.review-3.outputs.decision }}
+        run: |
+          set -euo pipefail
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label 'ai:reviewing' 2>/dev/null || true
+          if [ "$R1" = approved ] || [ "$R2" = approved ] || [ "$R3" = approved ]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label 'ai:approved' --add-label 'ai:merge-ready'
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '## AI PR Relay: merge handoff\n\nThe independent AI reviewer has no remaining blocking findings. Automated review/fix rounds are complete. **Ryan: this PR is ready for your final review and merge decision.**'
+          else
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label 'ai:human-needed'
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '## AI PR Relay: human input needed\n\nThree automated review rounds completed without approval. The relay has stopped rather than loop indefinitely. **Ryan: please review the remaining disagreement/findings.**'
+          fi
