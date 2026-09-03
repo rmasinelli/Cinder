@@ -1,0 +1,96 @@
+name: AI Review Round
+
+on:
+  workflow_call:
+    inputs:
+      pr_number: {required: true, type: string}
+      origin: {required: true, type: string}
+      round: {required: true, type: number}
+    outputs:
+      decision:
+        value: ${{ jobs.review.outputs.decision }}
+      review:
+        value: ${{ jobs.review.outputs.review }}
+    secrets:
+      OPENAI_API_KEY: {required: true}
+      ANTHROPIC_API_KEY: {required: true}
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.result.outputs.decision }}
+      review: ${{ steps.result.outputs.review }}
+    steps:
+      - name: Resolve PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr_number }}
+        run: |
+          echo "head=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+
+      - name: Build review prompt
+        run: |
+          cat .github/ai/reviewer.md > /tmp/review-prompt.md
+          printf '\nReview PR #%s. This is review round %s. Inspect the complete PR diff against its base branch. Return concise findings.\n' '${{ inputs.pr_number }}' '${{ inputs.round }}' >> /tmp/review-prompt.md
+
+      - name: Claude reviews Codex
+        id: claude
+        if: inputs.origin == 'codex'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Read .github/ai/reviewer.md. Review PR #${{ inputs.pr_number }} against its base branch. Do not edit files. Return a JSON object with decision set to approved or changes_requested and review containing the complete review text.
+          claude_args: >-
+            --max-turns 10
+            --json-schema '{"type":"object","properties":{"decision":{"type":"string","enum":["approved","changes_requested"]},"review":{"type":"string"}},"required":["decision","review"],"additionalProperties":false}'
+
+      - name: Codex reviews Claude
+        id: codex
+        if: inputs.origin == 'claude'
+        uses: openai/codex-action@v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: /tmp/review-prompt.md
+          permission-profile: ':read-only'
+          safety-strategy: read-only
+          output-file: /tmp/codex-review.json
+          output-schema: '{"type":"object","properties":{"decision":{"type":"string","enum":["approved","changes_requested"]},"review":{"type":"string"}},"required":["decision","review"],"additionalProperties":false}'
+
+      - name: Normalize and post review
+        id: result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr_number }}
+          ORIGIN: ${{ inputs.origin }}
+          CLAUDE_JSON: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          if [ "$ORIGIN" = codex ]; then
+            printf '%s' "$CLAUDE_JSON" > /tmp/review.json
+          else
+            cp /tmp/codex-review.json /tmp/review.json
+          fi
+          decision="$(jq -r .decision /tmp/review.json)"
+          review="$(jq -r .review /tmp/review.json)"
+          {
+            echo "decision=$decision"
+            echo 'review<<AI_REVIEW_EOF'
+            echo "$review"
+            echo 'AI_REVIEW_EOF'
+          } >> "$GITHUB_OUTPUT"
+          printf '## AI Review — Round %s\n\n**Reviewer:** %s\n\n%s\n' '${{ inputs.round }}' "$([ "$ORIGIN" = codex ] && echo Claude || echo Codex)" "$review" > /tmp/comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
