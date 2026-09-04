@@ -14,6 +14,17 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'ai:needs-review') && contains(github.event.pull_request.labels.*.name, 'ai:origin-codex')
     runs-on: ubuntu-latest
     steps:
+      - name: Check Claude secret visibility
+        env:
+          CLAUDE_KEY: ${{ secrets.CINDER_GITHUB_CLAUDE }}
+        run: |
+          if [ -n "$CLAUDE_KEY" ]; then
+            echo "CINDER_GITHUB_CLAUDE is PRESENT"
+          else
+            echo "CINDER_GITHUB_CLAUDE is MISSING"
+            exit 1
+          fi
+
       - name: Check out PR branch
         uses: actions/checkout@v5
         with:
