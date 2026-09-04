@@ -8,8 +8,8 @@ on:
       round: {required: true, type: number}
       review: {required: true, type: string}
     secrets:
-      OPENAI_API_KEY: {required: true}
-      ANTHROPIC_API_KEY: {required: true}
+      OPENAI_API_KEY: {required: false}
+      ANTHROPIC_API_KEY: {required: false}
 
 permissions:
   contents: write
@@ -19,6 +19,22 @@ jobs:
   fix:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate author credential
+        env:
+          ORIGIN: ${{ inputs.origin }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ "$ORIGIN" = codex ]; then
+            test -n "$OPENAI_API_KEY" || { echo 'OPENAI_API_KEY is missing'; exit 1; }
+          elif [ "$ORIGIN" = claude ]; then
+            test -n "$ANTHROPIC_API_KEY" || { echo 'ANTHROPIC_API_KEY is missing'; exit 1; }
+          else
+            echo "Unsupported origin: $ORIGIN" >&2
+            exit 1
+          fi
+
       - name: Resolve PR branch
         id: pr
         env:
