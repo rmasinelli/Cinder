@@ -106,6 +106,7 @@ Cinder/
 | Supabase connection | `src/lib/supabase.js` |
 | UI or logic | `src/App.jsx` |
 | Database setup and upgrades | `docs/database/migrations.md` |
+| AI pull request review and fix loop | [Relay guide](docs/ai-pr-relay.md) |
 
 ---
 
