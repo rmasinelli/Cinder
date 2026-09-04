@@ -3,12 +3,6 @@ name: AI PR Relay
 on:
   pull_request:
     types: [opened, labeled, ready_for_review]
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: Pull request number to relay
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -16,51 +10,43 @@ permissions:
   issues: write
 
 concurrency:
-  group: ai-pr-relay-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: ai-pr-relay-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   relay:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ai:needs-review')
+    if: contains(github.event.pull_request.labels.*.name, 'ai:needs-review')
     runs-on: ubuntu-latest
     steps:
       - name: Resolve PR metadata
         id: meta
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_PR: ${{ github.event.pull_request.number }}
-          INPUT_PR: ${{ inputs.pr_number }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          pr="${EVENT_PR:-${INPUT_PR:-}}"
-          test -n "$pr"
-          labels="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          labels="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
           if grep -qx 'ai:origin-codex' <<<"$labels"; then origin=codex
           elif grep -qx 'ai:origin-claude' <<<"$labels"; then origin=claude
-          else
-            echo 'PR must have ai:origin-codex or ai:origin-claude' >&2
-            exit 1
-          fi
-          head="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          base="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)"
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          else echo 'Missing AI origin label' >&2; exit 1; fi
+          head="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
+          base="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)"
           echo "origin=$origin" >> "$GITHUB_OUTPUT"
           echo "head=$head" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --add-label 'ai:reviewing' || true
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label 'ai:reviewing' || true
 
       - uses: actions/checkout@v5
         with:
           ref: ${{ steps.meta.outputs.head }}
           fetch-depth: 0
 
-      - name: Build base prompts
+      - name: Prepare prompts
         run: |
-          cat .github/ai/reviewer.md > /tmp/review-prompt.md
-          printf '\nReview PR #%s against origin/%s. Inspect the complete diff against %s. Return concise findings.\n' '${{ steps.meta.outputs.pr }}' '${{ steps.meta.outputs.base }}' '${{ steps.meta.outputs.base }}' >> /tmp/review-prompt.md
+          cat .github/ai/reviewer.md > /tmp/review.md
+          printf '\nReview PR #%s against %s. Do not edit files.\n' '${{ github.event.pull_request.number }}' '${{ steps.meta.outputs.base }}' >> /tmp/review.md
           cat .github/ai/fix-review.md > /tmp/fix-base.md
 
-      # ----- Review round 1 -----
       - name: Claude reviews Codex — round 1
         id: claude1
         if: steps.meta.outputs.origin == 'codex'
@@ -68,19 +54,17 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          prompt: |
-            Read .github/ai/reviewer.md. Review PR #${{ steps.meta.outputs.pr }} against ${{ steps.meta.outputs.base }}. Do not edit files. Return JSON with decision approved or changes_requested and review containing the complete review text.
+          prompt: Read .github/ai/reviewer.md and review this PR. Do not edit files. Return structured output only.
           claude_args: >-
             --max-turns 10
             --json-schema '{"type":"object","properties":{"decision":{"type":"string","enum":["approved","changes_requested"]},"review":{"type":"string"}},"required":["decision","review"],"additionalProperties":false}'
 
       - name: Codex reviews Claude — round 1
-        id: codex1
         if: steps.meta.outputs.origin == 'claude'
         uses: openai/codex-action@v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: /tmp/review-prompt.md
+          prompt-file: /tmp/review.md
           permission-profile: ':read-only'
           safety-strategy: read-only
           output-file: /tmp/codex-review-1.json
@@ -89,8 +73,10 @@ jobs:
       - name: Normalize review 1
         id: review1
         env:
+          GH_TOKEN: ${{ github.token }}
           ORIGIN: ${{ steps.meta.outputs.origin }}
           CLAUDE_JSON: ${{ steps.claude1.outputs.structured_output }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ "$ORIGIN" = codex ]; then printf '%s' "$CLAUDE_JSON" > /tmp/review-1.json; else cp /tmp/codex-review-1.json /tmp/review-1.json; fi
@@ -98,12 +84,8 @@ jobs:
           review="$(jq -r .review /tmp/review-1.json)"
           echo "decision=$decision" >> "$GITHUB_OUTPUT"
           { echo 'review<<EOF'; echo "$review"; echo EOF; } >> "$GITHUB_OUTPUT"
-          printf '## AI Review — Round 1\n\n**Reviewer:** %s\n\n%s\n' "$([ "$ORIGIN" = codex ] && echo Claude || echo Codex)" "$review" > /tmp/comment-1.md
-          gh pr comment '${{ steps.meta.outputs.pr }}' --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment-1.md
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ORIGIN: ${{ steps.meta.outputs.origin }}
-          CLAUDE_JSON: ${{ steps.claude1.outputs.structured_output }}
+          printf '## AI Review — Round 1\n\n%s\n' "$review" > /tmp/comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
 
       - name: Build fix prompt 1
         if: steps.review1.outputs.decision == 'changes_requested'
@@ -111,9 +93,9 @@ jobs:
           REVIEW: ${{ steps.review1.outputs.review }}
         run: |
           cp /tmp/fix-base.md /tmp/fix-1.md
-          printf '\nPR: #%s\nReview round: 1\n\n## Independent review feedback\n%s\n\nAddress every valid blocking finding. Do not merge.\n' '${{ steps.meta.outputs.pr }}' "$REVIEW" >> /tmp/fix-1.md
+          printf '\n## Review feedback\n%s\n' "$REVIEW" >> /tmp/fix-1.md
 
-      - name: Codex fixes its PR — round 1
+      - name: Codex fixes — round 1
         if: steps.meta.outputs.origin == 'codex' && steps.review1.outputs.decision == 'changes_requested'
         uses: openai/codex-action@v1.12
         with:
@@ -122,26 +104,25 @@ jobs:
           permission-profile: ':workspace'
           safety-strategy: drop-sudo
 
-      - name: Claude fixes its PR — round 1
+      - name: Claude fixes — round 1
         if: steps.meta.outputs.origin == 'claude' && steps.review1.outputs.decision == 'changes_requested'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          prompt: Read /tmp/fix-1.md and address the review feedback in the current PR branch. Run relevant tests. Do not merge.
+          prompt: Read /tmp/fix-1.md, address valid blocking findings, run relevant tests, and do not merge.
           claude_args: '--max-turns 20'
 
       - name: Commit fixes — round 1
         if: steps.review1.outputs.decision == 'changes_requested'
         run: |
-          set -euo pipefail
           if git diff --quiet && git diff --cached --quiet; then exit 0; fi
           git config user.name 'ai-pr-relay[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A && git commit -m 'fix: address AI review round 1'
+          git add -A
+          git commit -m 'fix: address AI review round 1'
           git push origin HEAD:'${{ steps.meta.outputs.head }}'
 
-      # ----- Review round 2 -----
       - name: Claude reviews Codex — round 2
         id: claude2
         if: steps.meta.outputs.origin == 'codex' && steps.review1.outputs.decision == 'changes_requested'
@@ -149,18 +130,17 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          prompt: Review the current PR #${{ steps.meta.outputs.pr }} again after round-1 fixes. Do not edit files. Return JSON with decision and review.
+          prompt: Re-review this PR after the first fix pass. Do not edit files. Return structured output only.
           claude_args: >-
             --max-turns 10
             --json-schema '{"type":"object","properties":{"decision":{"type":"string","enum":["approved","changes_requested"]},"review":{"type":"string"}},"required":["decision","review"],"additionalProperties":false}'
 
       - name: Codex reviews Claude — round 2
-        id: codex2
         if: steps.meta.outputs.origin == 'claude' && steps.review1.outputs.decision == 'changes_requested'
         uses: openai/codex-action@v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: /tmp/review-prompt.md
+          prompt-file: /tmp/review.md
           permission-profile: ':read-only'
           safety-strategy: read-only
           output-file: /tmp/codex-review-2.json
@@ -173,14 +153,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ORIGIN: ${{ steps.meta.outputs.origin }}
           CLAUDE_JSON: ${{ steps.claude2.outputs.structured_output }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ "$ORIGIN" = codex ]; then printf '%s' "$CLAUDE_JSON" > /tmp/review-2.json; else cp /tmp/codex-review-2.json /tmp/review-2.json; fi
-          decision="$(jq -r .decision /tmp/review-2.json)"; review="$(jq -r .review /tmp/review-2.json)"
+          decision="$(jq -r .decision /tmp/review-2.json)"
+          review="$(jq -r .review /tmp/review-2.json)"
           echo "decision=$decision" >> "$GITHUB_OUTPUT"
           { echo 'review<<EOF'; echo "$review"; echo EOF; } >> "$GITHUB_OUTPUT"
-          printf '## AI Review — Round 2\n\n%s\n' "$review" > /tmp/comment-2.md
-          gh pr comment '${{ steps.meta.outputs.pr }}' --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment-2.md
+          printf '## AI Review — Round 2\n\n%s\n' "$review" > /tmp/comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
 
       - name: Build fix prompt 2
         if: steps.review2.outputs.decision == 'changes_requested'
@@ -188,9 +170,9 @@ jobs:
           REVIEW: ${{ steps.review2.outputs.review }}
         run: |
           cp /tmp/fix-base.md /tmp/fix-2.md
-          printf '\nPR: #%s\nReview round: 2\n\n## Independent review feedback\n%s\n' '${{ steps.meta.outputs.pr }}' "$REVIEW" >> /tmp/fix-2.md
+          printf '\n## Review feedback\n%s\n' "$REVIEW" >> /tmp/fix-2.md
 
-      - name: Codex fixes its PR — round 2
+      - name: Codex fixes — round 2
         if: steps.meta.outputs.origin == 'codex' && steps.review2.outputs.decision == 'changes_requested'
         uses: openai/codex-action@v1.12
         with:
@@ -199,25 +181,25 @@ jobs:
           permission-profile: ':workspace'
           safety-strategy: drop-sudo
 
-      - name: Claude fixes its PR — round 2
+      - name: Claude fixes — round 2
         if: steps.meta.outputs.origin == 'claude' && steps.review2.outputs.decision == 'changes_requested'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          prompt: Read /tmp/fix-2.md and address the review feedback. Run relevant tests. Do not merge.
+          prompt: Read /tmp/fix-2.md, address valid blocking findings, run relevant tests, and do not merge.
           claude_args: '--max-turns 20'
 
       - name: Commit fixes — round 2
         if: steps.review2.outputs.decision == 'changes_requested'
         run: |
-          set -euo pipefail
           if git diff --quiet && git diff --cached --quiet; then exit 0; fi
-          git config user.name 'ai-pr-relay[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A && git commit -m 'fix: address AI review round 2'
+          git config user.name 'ai-pr-relay[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: address AI review round 2'
           git push origin HEAD:'${{ steps.meta.outputs.head }}'
 
-      # ----- Review round 3 -----
       - name: Claude reviews Codex — round 3
         id: claude3
         if: steps.meta.outputs.origin == 'codex' && steps.review2.outputs.decision == 'changes_requested'
@@ -225,18 +207,17 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          prompt: Final automated review of PR #${{ steps.meta.outputs.pr }} after two fix rounds. Do not edit files. Return JSON with decision and review.
+          prompt: Final automated review after two fix passes. Do not edit files. Return structured output only.
           claude_args: >-
             --max-turns 10
             --json-schema '{"type":"object","properties":{"decision":{"type":"string","enum":["approved","changes_requested"]},"review":{"type":"string"}},"required":["decision","review"],"additionalProperties":false}'
 
       - name: Codex reviews Claude — round 3
-        id: codex3
         if: steps.meta.outputs.origin == 'claude' && steps.review2.outputs.decision == 'changes_requested'
         uses: openai/codex-action@v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: /tmp/review-prompt.md
+          prompt-file: /tmp/review.md
           permission-profile: ':read-only'
           safety-strategy: read-only
           output-file: /tmp/codex-review-3.json
@@ -249,29 +230,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ORIGIN: ${{ steps.meta.outputs.origin }}
           CLAUDE_JSON: ${{ steps.claude3.outputs.structured_output }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ "$ORIGIN" = codex ]; then printf '%s' "$CLAUDE_JSON" > /tmp/review-3.json; else cp /tmp/codex-review-3.json /tmp/review-3.json; fi
-          decision="$(jq -r .decision /tmp/review-3.json)"; review="$(jq -r .review /tmp/review-3.json)"
+          decision="$(jq -r .decision /tmp/review-3.json)"
+          review="$(jq -r .review /tmp/review-3.json)"
           echo "decision=$decision" >> "$GITHUB_OUTPUT"
-          printf '## AI Review — Round 3\n\n%s\n' "$review" > /tmp/comment-3.md
-          gh pr comment '${{ steps.meta.outputs.pr }}' --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment-3.md
+          printf '## AI Review — Round 3\n\n%s\n' "$review" > /tmp/comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
 
       - name: Finalize relay
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ steps.meta.outputs.pr }}
+          PR: ${{ github.event.pull_request.number }}
           R1: ${{ steps.review1.outputs.decision }}
           R2: ${{ steps.review2.outputs.decision }}
           R3: ${{ steps.review3.outputs.decision }}
         run: |
-          set -euo pipefail
           gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label 'ai:reviewing' 2>/dev/null || true
           if [ "$R1" = approved ] || [ "$R2" = approved ] || [ "$R3" = approved ]; then
             gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label 'ai:approved' --add-label 'ai:merge-ready'
-            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '## AI PR Relay: merge handoff\n\nThe independent AI reviewer has no remaining blocking findings. **Ryan: ready for your final review and merge decision.**'
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '## AI PR Relay: merge handoff
+
+The independent AI reviewer has no remaining blocking findings. **Ryan: ready for your final review and merge decision.**'
           else
             gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label 'ai:human-needed'
-            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '## AI PR Relay: human input needed\n\nThe automated relay did not reach approval within three rounds. **Ryan: please review the remaining findings.**'
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '## AI PR Relay: human input needed
+
+The relay did not reach approval within three rounds. **Ryan: please review the remaining findings.**'
           fi
