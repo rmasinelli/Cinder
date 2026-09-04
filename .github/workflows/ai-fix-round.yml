@@ -1,0 +1,74 @@
+name: AI Fix Round
+
+on:
+  workflow_call:
+    inputs:
+      pr_number: {required: true, type: string}
+      origin: {required: true, type: string}
+      round: {required: true, type: number}
+      review: {required: true, type: string}
+    secrets:
+      OPENAI_API_KEY: {required: true}
+      ANTHROPIC_API_KEY: {required: true}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr_number }}
+        run: |
+          echo "head=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+
+      - name: Build fix prompt
+        env:
+          REVIEW: ${{ inputs.review }}
+        run: |
+          cat .github/ai/fix-review.md > /tmp/fix-prompt.md
+          printf '\nPR: #%s\nReview round: %s\n\n## Independent review feedback\n%s\n\nAddress every valid blocking finding in the working tree. Do not merge.\n' '${{ inputs.pr_number }}' '${{ inputs.round }}' "$REVIEW" >> /tmp/fix-prompt.md
+
+      - name: Codex fixes its PR
+        if: inputs.origin == 'codex'
+        uses: openai/codex-action@v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: /tmp/fix-prompt.md
+          permission-profile: ':workspace'
+          safety-strategy: drop-sudo
+
+      - name: Claude fixes its PR
+        if: inputs.origin == 'claude'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Read /tmp/fix-prompt.md and address the independent review feedback in the current PR branch. Edit the working tree as needed. Run relevant tests. Do not merge the PR.
+          claude_args: '--max-turns 20'
+
+      - name: Commit and push fixes
+        env:
+          ROUND: ${{ inputs.round }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet && git diff --cached --quiet; then
+            echo 'Agent made no uncommitted changes; it may have committed directly or rejected the finding.'
+            exit 0
+          fi
+          git config user.name 'ai-pr-relay[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "fix: address AI review round $ROUND"
+          git push origin HEAD:'${{ steps.pr.outputs.head }}'
