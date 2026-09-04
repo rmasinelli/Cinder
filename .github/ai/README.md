@@ -26,9 +26,9 @@ The AI relay never merges a pull request. `ai:merge-ready` means the automated a
 
 ## Secrets
 
-The workflow expects repository Actions secrets named:
+The workflow uses these repository Actions secrets:
 
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
+- `CINDER_GITHUB_CLAUDE` — Anthropic API key used by Claude review/fix jobs.
+- `CINDER_GITHUB_CODEX` — OpenAI API key used by Codex review/fix jobs.
 
 Do not commit API keys or tokens to the repository.
