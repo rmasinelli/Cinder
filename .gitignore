@@ -4,4 +4,6 @@ assets/
 .DS_Store
 **/.DS_Store
 .env
+.env.*
+!.env.self-hosted.example
 supabase/private/
