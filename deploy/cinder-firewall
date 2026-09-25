@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+IPTABLES=/usr/sbin/iptables
+PORT=8080
+HOST_ADDRESS=10.10.40.180
+KUMA_ADDRESS=10.10.40.31
+
+insert_rule() {
+    if ! "$IPTABLES" -C DOCKER-USER "$@" 2>/dev/null; then
+        "$IPTABLES" -I DOCKER-USER 1 "$@"
+    fi
+}
+
+delete_rule() {
+    while "$IPTABLES" -C DOCKER-USER "$@" 2>/dev/null; do
+        "$IPTABLES" -D DOCKER-USER "$@"
+    done
+}
+
+apply_rules() {
+    insert_rule -p tcp -m conntrack --ctorigdst "$HOST_ADDRESS" --ctorigdstport "$PORT" -m comment --comment cinder-direct-drop -j DROP
+    insert_rule -p tcp -m conntrack --ctstate ESTABLISHED,RELATED --ctorigdst "$HOST_ADDRESS" --ctorigdstport "$PORT" -m comment --comment cinder-established-allow -j ACCEPT
+    insert_rule -p tcp -s "$KUMA_ADDRESS"/32 -m conntrack --ctorigdst "$HOST_ADDRESS" --ctorigdstport "$PORT" -m comment --comment cinder-kuma-allow -j ACCEPT
+}
+
+remove_rules() {
+    delete_rule -p tcp -s "$KUMA_ADDRESS"/32 -m conntrack --ctorigdst "$HOST_ADDRESS" --ctorigdstport "$PORT" -m comment --comment cinder-kuma-allow -j ACCEPT
+    delete_rule -p tcp -m conntrack --ctstate ESTABLISHED,RELATED --ctorigdst "$HOST_ADDRESS" --ctorigdstport "$PORT" -m comment --comment cinder-established-allow -j ACCEPT
+    delete_rule -p tcp -m conntrack --ctorigdst "$HOST_ADDRESS" --ctorigdstport "$PORT" -m comment --comment cinder-direct-drop -j DROP
+}
+
+case "${1:-}" in
+    apply) apply_rules ;;
+    remove) remove_rules ;;
+    *) echo "usage: $0 {apply|remove}" >&2; exit 2 ;;
+esac

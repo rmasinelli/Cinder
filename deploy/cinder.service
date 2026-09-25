@@ -1,0 +1,19 @@
+[Unit]
+Description=Cinder self-hosted frontend
+Requires=docker.service cinder-firewall.service
+After=network-online.target docker.service cinder-firewall.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/cinder
+EnvironmentFile=/etc/cinder.env
+ExecStart=/usr/bin/docker compose --profile tunnel up -d --build --remove-orphans
+ExecStartPost=/usr/bin/docker compose ps
+ExecStop=/usr/bin/docker compose --profile tunnel down
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

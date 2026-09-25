@@ -1,0 +1,55 @@
+services:
+  cinder-web:
+    build:
+      context: .
+      args:
+        VITE_BASE_PATH: /
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+    image: cinder-web:pilot
+    container_name: cinder-web
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=16m,uid=101,gid=101,mode=0755
+    ports:
+      - "${CINDER_BIND_IP:-127.0.0.1}:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:b269e8abd07a5bf6f3f4be65d5050b2174eca89c56a0241a8ff32a16aec454e4
+    container_name: cinder-cloudflared
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token-file
+      - /run/secrets/cloudflared_token
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      cinder-web:
+        condition: service_healthy
+    secrets:
+      - cloudflared_token
+
+secrets:
+  cloudflared_token:
+    # File secrets retain host ownership/mode: install as 65532:65532, mode 0400.
+    # See docs/deployment/self-hosted-frontend.md for setup and acceptance checks.
+    file: ${CLOUDFLARED_TOKEN_FILE:-/etc/cinder/cloudflared-token}

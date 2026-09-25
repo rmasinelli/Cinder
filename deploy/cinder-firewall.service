@@ -1,0 +1,15 @@
+[Unit]
+Description=Restrict direct Cinder access to monitoring
+Requires=docker.service
+After=network-online.target docker.service
+PartOf=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cinder-firewall apply
+ExecStop=/usr/local/sbin/cinder-firewall remove
+
+[Install]
+WantedBy=multi-user.target
