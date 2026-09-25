@@ -50,4 +50,6 @@ services:
 
 secrets:
   cloudflared_token:
+    # File secrets retain host ownership/mode: install as 65532:65532, mode 0400.
+    # See docs/deployment/self-hosted-frontend.md for setup and acceptance checks.
     file: ${CLOUDFLARED_TOKEN_FILE:-/etc/cinder/cloudflared-token}
