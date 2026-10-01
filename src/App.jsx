@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./lib/supabase.js";
 import { listKnowledgeArticles, saveKnowledgeArticle, deleteKnowledgeArticle } from "./lib/knowledgeBase.js";
 import { appendUniqueNote, clearClassroomDraft, hasClassroomDraft, loadClassroomDraft, saveClassroomDraft } from "./lib/classroomDrafts.mjs";
 import { COURSES, courseById } from "./data/courses.js";
+import { studentLabInstructions } from "./data/studentLabInstructions.mjs";
 import { CLIENTS } from "./data/clients.js";
 import { PERSON_BY_ID, ORG_COLOR } from "./data/people.js";
 import { SCENARIOS } from "./data/scenarios.js";
@@ -175,6 +176,18 @@ export default function App() {
   const [builtinInstructorNotes,setBuiltinInstructorNotes] = useState({});
   const [showOnboarding,setShowOnboarding]   = useState(false);
   const [deepAssigned,setDeepAssigned]       = useState(null); // assigned ticket id to auto-open in MyTickets
+  const activeUserId = useRef(null);
+  const profileRequest = useRef(0);
+
+  const clearSession = useCallback(() => {
+    profileRequest.current += 1;
+    activeUserId.current = null;
+    setSession(null); setView("dashboard"); setSelected(null); setDeepAssigned(null);
+    setShowOnboarding(false);
+    setClassStudents([]); setAssignedTickets([]);
+    setReadinessChecks([]); setSafetyAcknowledgments([]);
+  }, []);
+
 
   const refreshAssignedTickets = useCallback(async currentSession => {
     if (!currentSession) return;
@@ -204,10 +217,20 @@ export default function App() {
 
   // ── Load profile from Supabase after auth ──────────────────────
   const loadProfile = useCallback(async (userId) => {
+    const request = ++profileRequest.current;
+    const accountChanged = activeUserId.current !== userId;
+    if (accountChanged) {
+      activeUserId.current = userId;
+      setSession(null); setView("dashboard"); setSelected(null); setDeepAssigned(null);
+      setShowOnboarding(false);
+      setClassStudents([]); setAssignedTickets([]);
+      setReadinessChecks([]); setSafetyAcknowledgments([]);
+    }
     const [profileRes, membershipRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).single(),
       supabase.rpc("get_my_classes"),
     ]);
+    if (request !== profileRequest.current || activeUserId.current !== userId) return null;
     const { data: profile, error } = profileRes;
     const enrolledClasses = membershipRes.data || [];
     if (membershipRes.error) console.warn("class membership load error:", membershipRes.error);
@@ -225,7 +248,6 @@ export default function App() {
         className: primaryClass?.name || "",
         classes: enrolledClasses,
       });
-      setView("dashboard");
       if (!localStorage.getItem(`cinder:onboarded:${userId}`)) {
         setShowOnboarding(true);
       }
@@ -251,22 +273,29 @@ export default function App() {
     })();
 
     // Keep session in sync
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+    let active = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, authSession) => {
       if (authSession) {
-        await loadProfile(authSession.user.id);
+        // Supabase may emit SIGNED_IN again when a browser tab regains focus.
+        // Refresh account data without navigating away from the current work.
+        // Defer API calls until the auth callback has released its lock.
+        const userId = authSession.user.id;
+        const generation = profileRequest.current;
+        setTimeout(() => {
+          if (active && generation === profileRequest.current) void loadProfile(userId);
+        }, 0);
       } else {
-        setSession(null);
+        clearSession();
       }
     });
-    return () => subscription.unsubscribe();
-  },[loadProfile]);
+    return () => { active = false; subscription.unsubscribe(); };
+  },[loadProfile,clearSession]);
 
   function showToast(msg,type="success") { setToast({msg,type}); setTimeout(()=>setToast(null),3500); }
 
   async function logout() {
     await supabase.auth.signOut();
-    setSession(null); setView("dashboard"); setSelected(null);
-    setClassStudents([]); setAssignedTickets([]); setReadinessChecks([]); setSafetyAcknowledgments([]);
+    clearSession();
   }
 
   // ── Load class students (admin) or assigned tickets (student) after login ──
@@ -1410,6 +1439,20 @@ function TeamContribution({ticket,onSave,onSaveSharedOutcome}){
   return <Card style={{marginTop:16,border:`1px solid ${incident?.color_hex||"#A78BFA"}55`}}><div style={{display:"flex",justifyContent:"space-between",gap:12}}><SectionLabel>Linked team incident</SectionLabel><span style={{fontSize:11,color:incident?.color_hex||"#A78BFA"}}>{incident?.team_name||ticket.group_tag} · {incident?.color_name}</span></div>{incident?.title&&<div style={{fontSize:13,color:"#EDE9E3",fontWeight:700,marginBottom:6}}>{incident.title}</div>}{incident?.description&&<p style={{fontSize:11,color:"#8A7868",lineHeight:1.55,marginTop:0}}>{incident.description}</p>}<DetailRow label="Your role this lab" val={assignedRole||"Not assigned"}/>{roster.length>0&&<div style={{background:"#111",border:"1px solid #242424",borderRadius:6,padding:9,marginBottom:14}}>{roster.map(member=><div key={member.student_id} style={{fontSize:10,color:member.contribution_recorded?"#4ADE80":"#FBBF24",marginBottom:3}}>{member.contribution_recorded?"✓":"○"} {member.student_alias} · {member.team_role} · {member.ticket_status}</div>)}</div>}<Field label="Shared verified outcome"><textarea value={sharedOutcome} maxLength={2000} onChange={event=>{setSharedOutcome(event.target.value);setMessage("");}} placeholder="What result did the team verify together?" style={{...inputStyle,minHeight:64,resize:"vertical"}}/>{incident?.shared_outcome_updated_at&&<div style={{fontSize:9,color:"#6A5848",marginTop:5}}>Last updated {fmt(incident.shared_outcome_updated_at)}</div>}<button onClick={submitOutcome} disabled={savingOutcome||sharedOutcome.trim().length<10} style={{...btnGhost,marginTop:8,opacity:savingOutcome||sharedOutcome.trim().length<10?0.45:1}}>{savingOutcome?"Saving…":"Save shared outcome"}</button></Field><p style={{fontSize:11,color:"#8A7868",lineHeight:1.55}}>Record only what you personally contributed below. The team’s technical outcome is shared; your evidence remains individual.</p><textarea value={contribution} maxLength={1000} onChange={event=>{setContribution(event.target.value);setMessage("");}} placeholder="What did you personally do, observe, communicate, or verify?" style={{...inputStyle,minHeight:78,resize:"vertical"}}/><button onClick={submit} disabled={saving||contribution.trim().length<10||!assignedRole} style={{...btnPrimary,width:"auto",marginTop:10,opacity:saving||contribution.trim().length<10?0.45:1}}>{saving?"Saving…":"Save individual contribution"}</button>{message&&<div role="status" style={{fontSize:11,color:message.includes("recorded")?"#4ADE80":"#F87171",marginTop:8}}>{message}</div>}</Card>;
 }
 
+function StudentLabInstructions({ticket}) {
+  const instructions = studentLabInstructions(ticket);
+  if (!instructions) return null;
+  return <section aria-label="What to do" style={{marginTop:16,background:"#141414",border:"1px solid #3A3024",borderRadius:10,padding:"18px 24px",color:"#C8B8A8",fontSize:13,lineHeight:1.6}}>
+    <h2 style={{margin:"0 0 4px",fontSize:18,color:"#F0EDE8"}}>What to do</h2>
+    <p style={{margin:"0 0 16px",fontSize:11,color:"#8A7868"}}>Student instructions v{instructions.version} · {instructions.published} · Addendum to the original client request. Your issued ticket and saved evidence stay unchanged.</p>
+    <h3 style={{fontSize:13,color:"#E8922E"}}>Goal</h3><p>{instructions.goal}</p>
+    {[["Equipment",instructions.equipment],["Steps",instructions.steps],["Safety",instructions.safety],["Evidence",instructions.evidence],["Completion",instructions.completion],["Reset",instructions.reset]].map(([heading,items])=><div key={heading}>
+      <h3 style={{fontSize:13,color:"#E8922E",marginBottom:6}}>{heading}</h3>
+      {heading==="Steps"?<ol style={{paddingLeft:22,marginTop:0}}>{items.map(item=><li key={item} style={{marginBottom:6}}>{item}</li>)}</ol>:<ul style={{paddingLeft:20,marginTop:0}}>{items.map(item=><li key={item} style={{marginBottom:6}}>{item}</li>)}</ul>}
+    </div>)}
+  </section>;
+}
+
 function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],safetyAcknowledgments=[],initialAssigned,onConsumeInitial,onOpen,onSaveNote,onSaveFieldJournal,onSaveTeamContribution,onSaveTeamSharedOutcome,onStatusChange,onSubmitReadiness,onSubmitClientInquiry,onAcknowledgeSafety}) {
   const [selectedAssigned,setSelectedAssigned]=useState(initialAssigned||null);
   const [atNotes,setAtNotes]=useState([]);
@@ -1634,6 +1677,7 @@ function MyTickets({session,tickets,users,assignedTickets,readinessChecks=[],saf
                 </div>
               </div>
 
+              <StudentLabInstructions ticket={at} />
               <FieldJournalLink key={`journal-${at.id}`} ticket={at} session={session} onSave={onSaveFieldJournal} />
               <TeamContribution key={`team-${at.id}`} ticket={at} onSave={onSaveTeamContribution} onSaveSharedOutcome={onSaveTeamSharedOutcome}/>
               <ClientInquiryPanel key={`client-${at.id}`} ticket={at} onSubmit={onSubmitClientInquiry} />
